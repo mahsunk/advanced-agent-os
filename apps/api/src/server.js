@@ -1,12 +1,14 @@
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 
+import { InMemoryStore } from '../../../packages/memory/in-memory-store.js';
 import { OpenAiCompatibleProvider } from '../../../packages/providers/openai-provider.js';
 
 const app = Fastify({ logger: true });
 await app.register(websocket);
 
 const provider = new OpenAiCompatibleProvider();
+const memory = new InMemoryStore();
 
 const agents = [
   'project-manager',
@@ -45,6 +47,20 @@ function addEvent(event) {
   broadcast(event);
 }
 
+function addMemory(record) {
+  const storedRecord = memory.add(record);
+
+  addEvent({
+    id: `event-${events.length + 1}`,
+    type: 'memory.created',
+    message: `Memory record created: ${storedRecord.type}`,
+    timestamp: new Date().toISOString(),
+    data: storedRecord
+  });
+
+  return storedRecord;
+}
+
 async function runAgentStep(agentId, systemPrompt, userPrompt) {
   addEvent({
     id: `event-${events.length + 1}`,
@@ -68,6 +84,15 @@ async function runAgentStep(agentId, systemPrompt, userPrompt) {
     data: result
   });
 
+  addMemory({
+    type: 'agent-output',
+    content: result.content,
+    metadata: {
+      agentId,
+      model: result.model
+    }
+  });
+
   return result.content;
 }
 
@@ -84,6 +109,15 @@ app.get('/agents', async () => {
 
 app.get('/events', async () => {
   return { events };
+});
+
+app.get('/memory', async () => {
+  return { records: memory.list() };
+});
+
+app.get('/memory/search', async request => {
+  const query = request.query?.q ?? '';
+  return { records: query ? memory.search(query) : memory.list() };
 });
 
 app.get('/ws/events', { websocket: true }, connection => {
@@ -156,6 +190,15 @@ app.post('/run-ai-demo', async request => {
     data: result
   });
 
+  addMemory({
+    type: 'ai-demo-result',
+    content: result.content,
+    metadata: {
+      prompt,
+      model: result.model
+    }
+  });
+
   return {
     success: true,
     prompt,
@@ -213,6 +256,15 @@ app.post('/run-agent-chain', async request => {
     frontendPlan,
     qaPlan
   };
+
+  addMemory({
+    type: 'agent-chain-artifact',
+    content: JSON.stringify(finalResult, null, 2),
+    metadata: {
+      goal,
+      agents: ['project-manager', 'architect', 'backend', 'frontend', 'qa']
+    }
+  });
 
   addEvent({
     id: `event-${events.length + 1}`,
