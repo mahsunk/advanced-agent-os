@@ -26,6 +26,22 @@ export async function runDemoOrchestration() {
   return response.json();
 }
 
+export async function runAiDemo(prompt: string) {
+  const response = await fetch(`${API_BASE_URL}/run-ai-demo`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ prompt })
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to run AI demo');
+  }
+
+  return response.json();
+}
+
 export function subscribeToEvents(onEvent: (event: DashboardEvent) => void) {
   const socket = new WebSocket(`${WS_BASE_URL}/ws/events`);
 
