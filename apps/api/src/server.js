@@ -1,8 +1,12 @@
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 
+import { OpenAiCompatibleProvider } from '../../../packages/providers/openai-provider.js';
+
 const app = Fastify({ logger: true });
 await app.register(websocket);
+
+const provider = new OpenAiCompatibleProvider();
 
 const agents = [
   'project-manager',
@@ -93,6 +97,43 @@ app.post('/run-demo', async () => {
     message: 'Demo orchestration started.',
     agentsQueued: agents.length,
     events
+  };
+});
+
+app.post('/run-ai-demo', async request => {
+  const body = request.body ?? {};
+  const prompt = body.prompt ?? 'Create a short architecture plan for an AI SaaS dashboard.';
+
+  addEvent({
+    id: `event-${events.length + 1}`,
+    type: 'task',
+    message: 'AI demo task started by Project Manager Agent.',
+    timestamp: new Date().toISOString()
+  });
+
+  const result = await provider.complete([
+    {
+      role: 'system',
+      content: 'You are the Project Manager Agent inside Advanced Agent OS. Return a concise engineering plan.'
+    },
+    {
+      role: 'user',
+      content: prompt
+    }
+  ]);
+
+  addEvent({
+    id: `event-${events.length + 1}`,
+    type: 'agent',
+    message: `AI provider responded with model ${result.model}.`,
+    timestamp: new Date().toISOString(),
+    data: result
+  });
+
+  return {
+    success: true,
+    prompt,
+    result
   };
 });
 
