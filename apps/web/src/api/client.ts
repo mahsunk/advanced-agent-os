@@ -3,6 +3,14 @@ import type { DashboardEvent } from '../events';
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
 
+export type MemoryRecord = {
+  id: string;
+  type: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
 export async function fetchEvents(): Promise<DashboardEvent[]> {
   const response = await fetch(`${API_BASE_URL}/events`);
 
@@ -12,6 +20,28 @@ export async function fetchEvents(): Promise<DashboardEvent[]> {
 
   const data = await response.json();
   return data.events ?? [];
+}
+
+export async function fetchMemory(): Promise<MemoryRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/memory`);
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch memory');
+  }
+
+  const data = await response.json();
+  return data.records ?? [];
+}
+
+export async function searchMemory(query: string): Promise<MemoryRecord[]> {
+  const response = await fetch(`${API_BASE_URL}/memory/search?q=${encodeURIComponent(query)}`);
+
+  if (!response.ok) {
+    throw new Error('Failed to search memory');
+  }
+
+  const data = await response.json();
+  return data.records ?? [];
 }
 
 export async function runDemoOrchestration() {
