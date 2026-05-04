@@ -6,9 +6,11 @@ import {
   fetchMemory,
   runAgentChain,
   runAiDemo,
+  runCommandTool,
   runDemoOrchestration,
   searchMemory,
   subscribeToEvents,
+  type CommandResult,
   type MemoryRecord
 } from './api/client';
 import { AgentCard } from './components/AgentCard';
@@ -24,10 +26,13 @@ function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [isAiRunning, setIsAiRunning] = useState(false);
   const [isChainRunning, setIsChainRunning] = useState(false);
+  const [isCommandRunning, setIsCommandRunning] = useState(false);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
   const [prompt, setPrompt] = useState('Create a short engineering plan for a multi-agent SaaS platform.');
+  const [command, setCommand] = useState('npm run check');
   const [aiResult, setAiResult] = useState<string | undefined>();
   const [chainResult, setChainResult] = useState<unknown>();
+  const [commandResult, setCommandResult] = useState<CommandResult | undefined>();
 
   async function refreshEvents() {
     try {
@@ -87,6 +92,19 @@ function App() {
     }
   }
 
+  async function handleRunCommand() {
+    setIsCommandRunning(true);
+
+    try {
+      const result = await runCommandTool(command, 'manual-operator');
+      setCommandResult(result);
+      await refreshEvents();
+      await refreshMemory();
+    } finally {
+      setIsCommandRunning(false);
+    }
+  }
+
   useEffect(() => {
     refreshEvents();
     refreshMemory();
@@ -137,6 +155,27 @@ function App() {
         {chainResult ? (
           <pre style={{ whiteSpace: 'pre-wrap', border: '1px solid #333', borderRadius: 12, padding: 16, marginTop: 16 }}>
             {JSON.stringify(chainResult, null, 2)}
+          </pre>
+        ) : null}
+      </section>
+
+      <section style={{ marginBottom: 32 }}>
+        <h2>Command Runner</h2>
+        <p>Commands are validated and dry-run by default. Real execution is intentionally disabled until Docker isolation is implemented.</p>
+        <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+          <input
+            value={command}
+            onChange={event => setCommand(event.target.value)}
+            placeholder="npm run check"
+            style={{ flex: 1, padding: 10 }}
+          />
+          <button onClick={handleRunCommand} disabled={isCommandRunning || !command.trim()}>
+            {isCommandRunning ? 'Validating...' : 'Validate Command'}
+          </button>
+        </div>
+        {commandResult ? (
+          <pre style={{ whiteSpace: 'pre-wrap', border: '1px solid #333', borderRadius: 12, padding: 16 }}>
+            {JSON.stringify(commandResult, null, 2)}
           </pre>
         ) : null}
       </section>
