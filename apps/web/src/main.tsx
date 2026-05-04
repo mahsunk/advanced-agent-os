@@ -2,6 +2,8 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 
 import { AgentCard } from './components/AgentCard';
+import { EventFeed } from './components/EventFeed';
+import { initialEvents } from './events';
 import { dashboardState } from './state/dashboard-store';
 
 function App() {
@@ -15,6 +17,7 @@ function App() {
       <section style={{ marginBottom: 32 }}>
         <h2>System Overview</h2>
         <p>Total agents: {dashboardState.agents.length}</p>
+        <p>Total events: {initialEvents.length}</p>
         <p>Runtime: autonomous task graph + shared memory + tool execution.</p>
       </section>
 
@@ -31,6 +34,8 @@ function App() {
           ))}
         </div>
       </section>
+
+      <EventFeed events={initialEvents} />
     </div>
   );
 }
