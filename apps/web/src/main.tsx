@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 
-import { fetchEvents, runDemoOrchestration } from './api/client';
+import { fetchEvents, runDemoOrchestration, subscribeToEvents } from './api/client';
 import { AgentCard } from './components/AgentCard';
 import { EventFeed } from './components/EventFeed';
 import type { DashboardEvent } from './events';
@@ -11,6 +11,7 @@ import { dashboardState } from './state/dashboard-store';
 function App() {
   const [events, setEvents] = useState<DashboardEvent[]>(initialEvents);
   const [isRunning, setIsRunning] = useState(false);
+  const [isLiveConnected, setIsLiveConnected] = useState(false);
 
   async function refreshEvents() {
     try {
@@ -34,6 +35,13 @@ function App() {
 
   useEffect(() => {
     refreshEvents();
+
+    const unsubscribe = subscribeToEvents(event => {
+      setIsLiveConnected(true);
+      setEvents(currentEvents => [event, ...currentEvents]);
+    });
+
+    return unsubscribe;
   }, []);
 
   return (
@@ -50,6 +58,7 @@ function App() {
         <h2>System Overview</h2>
         <p>Total agents: {dashboardState.agents.length}</p>
         <p>Total events: {events.length}</p>
+        <p>Live stream: {isLiveConnected ? 'connected' : 'waiting'}</p>
         <p>Runtime: autonomous task graph + shared memory + tool execution.</p>
       </section>
 
