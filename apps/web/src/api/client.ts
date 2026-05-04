@@ -11,6 +11,16 @@ export type MemoryRecord = {
   createdAt: string;
 };
 
+export type CommandResult = {
+  success: boolean;
+  command: string;
+  mode: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  context: Record<string, unknown>;
+};
+
 export async function fetchEvents(): Promise<DashboardEvent[]> {
   const response = await fetch(`${API_BASE_URL}/events`);
 
@@ -42,6 +52,22 @@ export async function searchMemory(query: string): Promise<MemoryRecord[]> {
 
   const data = await response.json();
   return data.records ?? [];
+}
+
+export async function runCommandTool(command: string, agentId = 'manual-operator'): Promise<CommandResult> {
+  const response = await fetch(`${API_BASE_URL}/tools/run-command`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ command, agentId })
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to run command tool');
+  }
+
+  return response.json();
 }
 
 export async function runDemoOrchestration() {
