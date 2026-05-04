@@ -1,6 +1,8 @@
 import Fastify from 'fastify';
+import websocket from '@fastify/websocket';
 
 const app = Fastify({ logger: true });
+await app.register(websocket);
 
 const agents = [
   'project-manager',
@@ -24,6 +26,21 @@ const events = [
   }
 ];
 
+const sockets = new Set();
+
+function broadcast(event) {
+  for (const socket of sockets) {
+    if (socket.readyState === 1) {
+      socket.send(JSON.stringify(event));
+    }
+  }
+}
+
+function addEvent(event) {
+  events.push(event);
+  broadcast(event);
+}
+
 app.get('/health', async () => {
   return {
     status: 'ok',
@@ -39,23 +56,37 @@ app.get('/events', async () => {
   return { events };
 });
 
+app.get('/ws/events', { websocket: true }, connection => {
+  sockets.add(connection.socket);
+
+  connection.socket.send(JSON.stringify({
+    id: `event-${Date.now()}`,
+    type: 'system',
+    message: 'Connected to Advanced Agent OS live event stream.',
+    timestamp: new Date().toISOString()
+  }));
+
+  connection.socket.on('close', () => {
+    sockets.delete(connection.socket);
+  });
+});
+
 app.post('/run-demo', async () => {
   const timestamp = new Date().toISOString();
 
-  events.push(
-    {
-      id: `event-${events.length + 1}`,
-      type: 'task',
-      message: 'Demo project task started by Project Manager Agent.',
-      timestamp
-    },
-    {
-      id: `event-${events.length + 2}`,
-      type: 'agent',
-      message: 'Architect, Backend, Frontend, QA, Security and DevOps agents queued.',
-      timestamp: new Date().toISOString()
-    }
-  );
+  addEvent({
+    id: `event-${events.length + 1}`,
+    type: 'task',
+    message: 'Demo project task started by Project Manager Agent.',
+    timestamp
+  });
+
+  addEvent({
+    id: `event-${events.length + 1}`,
+    type: 'agent',
+    message: 'Architect, Backend, Frontend, QA, Security and DevOps agents queued.',
+    timestamp: new Date().toISOString()
+  });
 
   return {
     success: true,
