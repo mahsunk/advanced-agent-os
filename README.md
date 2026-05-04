@@ -12,6 +12,22 @@ It is designed as a TypeScript/JavaScript monorepo with:
 - tool/plugin/provider layers
 - Docker and GitHub Actions support
 
+## Project Status
+
+Advanced Agent OS currently has a working foundation:
+
+- API server with REST endpoints
+- WebSocket live event stream
+- React dashboard with live event feed
+- Demo orchestration trigger
+- Multi-agent role model
+- Task graph orchestration primitives
+- Shared memory and tool abstractions
+- Provider and plugin registries
+- Docker Compose setup
+- GitHub Actions CI
+- Public roadmap in [`ROADMAP.md`](./ROADMAP.md)
+
 ## Agent Roles
 
 - Project Manager Agent
@@ -153,13 +169,17 @@ NODE_ENV=development
 
 ## Roadmap
 
+See the full roadmap in [`ROADMAP.md`](./ROADMAP.md).
+
+Current planned milestones include:
+
 - Real OpenAI/Claude/Gemini provider adapters
 - Persistent vector memory
 - Browser automation
 - GitHub auto-patching
 - Secure terminal execution sandbox
 - Distributed workers
-- RBAC/auth system
+- Access control system
 - Visual workflow editor
 - Agent debate/voting engine
 - Self-improving agent loops
