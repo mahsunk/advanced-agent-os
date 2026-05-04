@@ -1,7 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 
-import { fetchEvents, runAgentChain, runAiDemo, runDemoOrchestration, subscribeToEvents } from './api/client';
+import {
+  fetchEvents,
+  fetchMemory,
+  runAgentChain,
+  runAiDemo,
+  runDemoOrchestration,
+  searchMemory,
+  subscribeToEvents,
+  type MemoryRecord
+} from './api/client';
 import { AgentCard } from './components/AgentCard';
 import { EventFeed } from './components/EventFeed';
 import type { DashboardEvent } from './events';
@@ -10,6 +19,8 @@ import { dashboardState } from './state/dashboard-store';
 
 function App() {
   const [events, setEvents] = useState<DashboardEvent[]>(initialEvents);
+  const [memoryRecords, setMemoryRecords] = useState<MemoryRecord[]>([]);
+  const [memoryQuery, setMemoryQuery] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [isAiRunning, setIsAiRunning] = useState(false);
   const [isChainRunning, setIsChainRunning] = useState(false);
@@ -24,6 +35,18 @@ function App() {
       setEvents(apiEvents.length ? apiEvents : initialEvents);
     } catch {
       setEvents(initialEvents);
+    }
+  }
+
+  async function refreshMemory() {
+    try {
+      const records = memoryQuery.trim()
+        ? await searchMemory(memoryQuery.trim())
+        : await fetchMemory();
+
+      setMemoryRecords(records);
+    } catch {
+      setMemoryRecords([]);
     }
   }
 
@@ -45,6 +68,7 @@ function App() {
       const response = await runAiDemo(prompt);
       setAiResult(response.result?.content ?? 'No AI result returned.');
       await refreshEvents();
+      await refreshMemory();
     } finally {
       setIsAiRunning(false);
     }
@@ -57,6 +81,7 @@ function App() {
       const response = await runAgentChain(prompt);
       setChainResult(response.result);
       await refreshEvents();
+      await refreshMemory();
     } finally {
       setIsChainRunning(false);
     }
@@ -64,10 +89,15 @@ function App() {
 
   useEffect(() => {
     refreshEvents();
+    refreshMemory();
 
     const unsubscribe = subscribeToEvents(event => {
       setIsLiveConnected(true);
       setEvents(currentEvents => [event, ...currentEvents]);
+
+      if (event.type === 'memory.created') {
+        refreshMemory();
+      }
     });
 
     return unsubscribe;
@@ -109,6 +139,29 @@ function App() {
             {JSON.stringify(chainResult, null, 2)}
           </pre>
         ) : null}
+      </section>
+
+      <section style={{ marginBottom: 32 }}>
+        <h2>Memory Explorer</h2>
+        <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+          <input
+            value={memoryQuery}
+            onChange={event => setMemoryQuery(event.target.value)}
+            placeholder="Search memory..."
+            style={{ flex: 1, padding: 10 }}
+          />
+          <button onClick={refreshMemory}>Search</button>
+        </div>
+        <p>Total memory records: {memoryRecords.length}</p>
+        <div>
+          {memoryRecords.map(record => (
+            <article key={record.id} style={{ border: '1px solid #333', borderRadius: 12, padding: 12, marginBottom: 12 }}>
+              <strong>{record.type}</strong>
+              <p>{record.createdAt}</p>
+              <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 180, overflow: 'auto' }}>{record.content}</pre>
+            </article>
+          ))}
+        </div>
       </section>
 
       <section style={{ marginBottom: 32 }}>
