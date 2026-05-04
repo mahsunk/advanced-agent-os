@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 
-import { fetchEvents, runAiDemo, runDemoOrchestration, subscribeToEvents } from './api/client';
+import { fetchEvents, runAgentChain, runAiDemo, runDemoOrchestration, subscribeToEvents } from './api/client';
 import { AgentCard } from './components/AgentCard';
 import { EventFeed } from './components/EventFeed';
 import type { DashboardEvent } from './events';
@@ -12,9 +12,11 @@ function App() {
   const [events, setEvents] = useState<DashboardEvent[]>(initialEvents);
   const [isRunning, setIsRunning] = useState(false);
   const [isAiRunning, setIsAiRunning] = useState(false);
+  const [isChainRunning, setIsChainRunning] = useState(false);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
   const [prompt, setPrompt] = useState('Create a short engineering plan for a multi-agent SaaS platform.');
   const [aiResult, setAiResult] = useState<string | undefined>();
+  const [chainResult, setChainResult] = useState<unknown>();
 
   async function refreshEvents() {
     try {
@@ -48,6 +50,18 @@ function App() {
     }
   }
 
+  async function handleRunAgentChain() {
+    setIsChainRunning(true);
+
+    try {
+      const response = await runAgentChain(prompt);
+      setChainResult(response.result);
+      await refreshEvents();
+    } finally {
+      setIsChainRunning(false);
+    }
+  }
+
   useEffect(() => {
     refreshEvents();
 
@@ -77,12 +91,22 @@ function App() {
           rows={4}
           style={{ width: '100%', padding: 12, marginBottom: 12 }}
         />
-        <button onClick={handleRunAiDemo} disabled={isAiRunning || !prompt.trim()}>
-          {isAiRunning ? 'Running AI demo...' : 'Run AI Demo'}
-        </button>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button onClick={handleRunAiDemo} disabled={isAiRunning || !prompt.trim()}>
+            {isAiRunning ? 'Running AI demo...' : 'Run AI Demo'}
+          </button>
+          <button onClick={handleRunAgentChain} disabled={isChainRunning || !prompt.trim()}>
+            {isChainRunning ? 'Running agent chain...' : 'Run Agent Chain'}
+          </button>
+        </div>
         {aiResult ? (
           <pre style={{ whiteSpace: 'pre-wrap', border: '1px solid #333', borderRadius: 12, padding: 16, marginTop: 16 }}>
             {aiResult}
+          </pre>
+        ) : null}
+        {chainResult ? (
+          <pre style={{ whiteSpace: 'pre-wrap', border: '1px solid #333', borderRadius: 12, padding: 16, marginTop: 16 }}>
+            {JSON.stringify(chainResult, null, 2)}
           </pre>
         ) : null}
       </section>
