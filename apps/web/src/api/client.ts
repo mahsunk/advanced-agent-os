@@ -1,6 +1,7 @@
 import type { DashboardEvent } from '../events';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
+const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
 
 export async function fetchEvents(): Promise<DashboardEvent[]> {
   const response = await fetch(`${API_BASE_URL}/events`);
@@ -23,4 +24,20 @@ export async function runDemoOrchestration() {
   }
 
   return response.json();
+}
+
+export function subscribeToEvents(onEvent: (event: DashboardEvent) => void) {
+  const socket = new WebSocket(`${WS_BASE_URL}/ws/events`);
+
+  socket.onmessage = message => {
+    try {
+      onEvent(JSON.parse(message.data));
+    } catch {
+      // Ignore malformed websocket messages.
+    }
+  };
+
+  return () => {
+    socket.close();
+  };
 }
