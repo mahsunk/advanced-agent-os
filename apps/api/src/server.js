@@ -45,6 +45,32 @@ function addEvent(event) {
   broadcast(event);
 }
 
+async function runAgentStep(agentId, systemPrompt, userPrompt) {
+  addEvent({
+    id: `event-${events.length + 1}`,
+    type: 'agent',
+    agentId,
+    message: `${agentId} started.`,
+    timestamp: new Date().toISOString()
+  });
+
+  const result = await provider.complete([
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt }
+  ]);
+
+  addEvent({
+    id: `event-${events.length + 1}`,
+    type: 'agent',
+    agentId,
+    message: `${agentId} completed using ${result.model}.`,
+    timestamp: new Date().toISOString(),
+    data: result
+  });
+
+  return result.content;
+}
+
 app.get('/health', async () => {
   return {
     status: 'ok',
@@ -134,6 +160,71 @@ app.post('/run-ai-demo', async request => {
     success: true,
     prompt,
     result
+  };
+});
+
+app.post('/run-agent-chain', async request => {
+  const body = request.body ?? {};
+  const goal = body.prompt ?? 'Build a production-ready AI SaaS dashboard.';
+
+  addEvent({
+    id: `event-${events.length + 1}`,
+    type: 'task',
+    message: 'Multi-agent chain started.',
+    timestamp: new Date().toISOString(),
+    data: { goal }
+  });
+
+  const projectPlan = await runAgentStep(
+    'project-manager',
+    'You are the Project Manager Agent. Break the user goal into a concise engineering execution plan.',
+    goal
+  );
+
+  const architecture = await runAgentStep(
+    'architect',
+    'You are the Architect Agent. Convert the project plan into a technical architecture with modules and data flow.',
+    projectPlan
+  );
+
+  const backendPlan = await runAgentStep(
+    'backend',
+    'You are the Backend Agent. Produce API, database and service implementation tasks from the architecture.',
+    architecture
+  );
+
+  const frontendPlan = await runAgentStep(
+    'frontend',
+    'You are the Frontend Agent. Produce UI screens, components and state management tasks from the architecture.',
+    architecture
+  );
+
+  const qaPlan = await runAgentStep(
+    'qa',
+    'You are the QA Agent. Review the backend and frontend plans and produce a practical test strategy.',
+    `Backend plan:\n${backendPlan}\n\nFrontend plan:\n${frontendPlan}`
+  );
+
+  const finalResult = {
+    goal,
+    projectPlan,
+    architecture,
+    backendPlan,
+    frontendPlan,
+    qaPlan
+  };
+
+  addEvent({
+    id: `event-${events.length + 1}`,
+    type: 'artifact.created',
+    message: 'Multi-agent chain completed and produced final execution artifact.',
+    timestamp: new Date().toISOString(),
+    data: finalResult
+  });
+
+  return {
+    success: true,
+    result: finalResult
   };
 });
 
