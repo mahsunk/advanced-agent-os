@@ -8,7 +8,12 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "echo agent-os-dev",
-    "build": "echo agent-os-build"
+    "dev:api": "npm run dev --workspace @advanced-agent-os/api",
+    "dev:web": "npm run dev --workspace @advanced-agent-os/web",
+    "build:web": "npm run build --workspace @advanced-agent-os/web",
+    "check": "npm run build:web"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
