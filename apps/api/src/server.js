@@ -3,12 +3,14 @@ import websocket from '@fastify/websocket';
 
 import { InMemoryStore } from '../../../packages/memory/in-memory-store.js';
 import { OpenAiCompatibleProvider } from '../../../packages/providers/openai-provider.js';
+import { SafeCommandRunner } from '../../../packages/tools/safe-command-runner.js';
 
 const app = Fastify({ logger: true });
 await app.register(websocket);
 
 const provider = new OpenAiCompatibleProvider();
 const memory = new InMemoryStore();
+const commandRunner = new SafeCommandRunner();
 
 const agents = [
   'project-manager',
@@ -133,6 +135,36 @@ app.get('/ws/events', { websocket: true }, connection => {
   connection.socket.on('close', () => {
     sockets.delete(connection.socket);
   });
+});
+
+app.post('/tools/run-command', async request => {
+  const body = request.body ?? {};
+  const command = body.command ?? '';
+  const agentId = body.agentId ?? 'manual-operator';
+
+  const result = await commandRunner.run(command, { agentId });
+
+  addEvent({
+    id: `event-${events.length + 1}`,
+    type: 'tool.command',
+    agentId,
+    message: `Command tool completed in ${result.mode} mode.`,
+    timestamp: new Date().toISOString(),
+    data: result
+  });
+
+  addMemory({
+    type: 'tool-command-result',
+    content: JSON.stringify(result, null, 2),
+    metadata: {
+      agentId,
+      command,
+      mode: result.mode,
+      success: result.success
+    }
+  });
+
+  return result;
 });
 
 app.post('/run-demo', async () => {
