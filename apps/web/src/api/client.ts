@@ -1,6 +1,8 @@
 import type { DashboardEvent } from '../events';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
+const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3000')
+  .replace(/^\s*VITE_API_URL\s*=\s*/i, '')
+  .replace(/\/+$/, '');
 const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
 
 function showMobileDebug(title: string, payload: unknown) {
