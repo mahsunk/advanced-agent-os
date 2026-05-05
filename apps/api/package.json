@@ -7,6 +7,7 @@
     "dev": "node src/server.js"
   },
   "dependencies": {
+    "@fastify/cors": "latest",
     "@fastify/websocket": "latest",
     "fastify": "latest"
   }
