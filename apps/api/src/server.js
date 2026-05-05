@@ -7,7 +7,14 @@ import { OpenAiCompatibleProvider } from '../../../packages/providers/openai-pro
 import { SafeCommandRunner } from '../../../packages/tools/safe-command-runner.js';
 
 const app = Fastify({ logger: true });
-
+app.options('*', async (request, reply) => {
+  reply
+    .header('Access-Control-Allow-Origin', '*')
+    .header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+    .header('Access-Control-Allow-Headers', 'Content-Type')
+    .status(204)
+    .send();
+});
 await app.register(cors, {
   origin: true,
   methods: ['GET', 'POST', 'OPTIONS'],
