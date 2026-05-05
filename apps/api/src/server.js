@@ -185,11 +185,39 @@ async function runAgentStep(agentId, systemPrompt, userPrompt) {
   }
 }
 
+app.get('/', async () => {
+  return {
+    status: 'ok',
+    service: 'advanced-agent-os'
+  };
+});
+
 app.get('/health', async () => {
   return {
     status: 'ok',
     service: 'advanced-agent-os-api'
   };
+});
+
+app.get('/test-groq', async (req, reply) => {
+  try {
+    const result = await provider.complete([
+      {
+        role: 'user',
+        content: 'Say hello from Groq'
+      }
+    ]);
+
+    return {
+      success: true,
+      result
+    };
+  } catch (error) {
+    return reply.code(500).send({
+      success: false,
+      error: error.message
+    });
+  }
 });
 
 app.get('/agents', async () => {
