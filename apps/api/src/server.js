@@ -113,6 +113,42 @@ app.get('/health', async () => {
   };
 });
 
+app.get('/debug/routes', async () => {
+  return {
+    routes: [
+      'GET /',
+      'GET /health',
+      'GET /debug/routes',
+      'GET /test-run-demo',
+      'GET /agents',
+      'GET /events',
+      'GET /memory',
+      'GET /memory/search?q=query',
+      'POST /tools/run-command',
+      'POST /run-demo',
+      'POST /run-ai-demo',
+      'POST /run-agent-chain',
+      'WS /ws/events'
+    ]
+  };
+});
+
+app.get('/test-run-demo', async () => {
+  const response = await app.inject({
+    method: 'POST',
+    url: '/run-demo'
+  });
+
+  try {
+    return JSON.parse(response.body);
+  } catch {
+    return {
+      statusCode: response.statusCode,
+      body: response.body
+    };
+  }
+});
+
 app.get('/agents', async () => {
   return { agents };
 });
