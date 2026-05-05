@@ -1,28 +1,47 @@
 import Fastify from 'fastify';
-
 import websocket from '@fastify/websocket';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 import { InMemoryStore } from '../../../packages/memory/in-memory-store.js';
 import { OpenAiCompatibleProvider } from '../../../packages/providers/openai-provider.js';
 import { SafeCommandRunner } from '../../../packages/tools/safe-command-runner.js';
 
 const app = Fastify({ logger: true });
-app.addHook('onRequest', async (request, reply) => {
-  reply.header('Access-Control-Allow-Origin', '*');
-  reply.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-  if (request.method === 'OPTIONS') {
-    reply.code(204).send();
-  }
-});
-
-
 await app.register(websocket);
 
 const provider = new OpenAiCompatibleProvider();
 const memory = new InMemoryStore();
 const commandRunner = new SafeCommandRunner();
+const persistentMemoryFile = process.env.MEMORY_FILE_PATH ?? path.resolve(process.cwd(), 'data', 'memory.json');
+
+async function loadPersistentMemory() {
+  try {
+    const raw = await fs.readFile(persistentMemoryFile, 'utf8');
+    const parsed = JSON.parse(raw);
+
+    if (Array.isArray(parsed.records)) {
+      for (const record of parsed.records) {
+        memory.add(record);
+      }
+    }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      app.log.warn({ error }, 'Failed to load persistent memory file');
+    }
+  }
+}
+
+async function persistMemory() {
+  await fs.mkdir(path.dirname(persistentMemoryFile), { recursive: true });
+  await fs.writeFile(
+    persistentMemoryFile,
+    JSON.stringify({ records: memory.list().reverse() }, null, 2),
+    'utf8'
+  );
+}
+
+await loadPersistentMemory();
 
 const agents = [
   'project-manager',
@@ -59,10 +78,19 @@ function broadcast(event) {
 function addEvent(event) {
   events.push(event);
   broadcast(event);
+  return event;
 }
 
-function addMemory(record) {
-  const storedRecord = memory.add(record);
+async function addMemory(record) {
+  const storedRecord = memory.add({
+    ...record,
+    metadata: {
+      provider: provider.name,
+      ...record.metadata
+    }
+  });
+
+  await persistMemory();
 
   addEvent({
     id: `event-${events.length + 1}`,
@@ -75,114 +103,92 @@ function addMemory(record) {
   return storedRecord;
 }
 
+function providerCompletedEvent(agentId, result) {
+  return addEvent({
+    id: `event-${events.length + 1}`,
+    type: 'provider.completed',
+    agentId,
+    message: `AI provider responded with model ${result.model}.`,
+    timestamp: new Date().toISOString(),
+    data: {
+      provider: provider.name,
+      model: result.model,
+      usage: result.usage ?? null
+    }
+  });
+}
+
+function providerErrorEvent(agentId, error) {
+  return addEvent({
+    id: `event-${events.length + 1}`,
+    type: 'provider.error',
+    agentId,
+    message: `AI provider failed for ${agentId}: ${error.message}`,
+    timestamp: new Date().toISOString(),
+    data: {
+      provider: provider.name,
+      error: error.message
+    }
+  });
+}
+
 async function runAgentStep(agentId, systemPrompt, userPrompt) {
   addEvent({
     id: `event-${events.length + 1}`,
-    type: 'agent',
+    type: 'agent.started',
     agentId,
     message: `${agentId} started.`,
     timestamp: new Date().toISOString()
   });
 
-  const result = await provider.complete([
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content: userPrompt }
-  ]);
+  try {
+    const result = await provider.complete([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt }
+    ]);
 
-  addEvent({
-    id: `event-${events.length + 1}`,
-    type: 'agent',
-    agentId,
-    message: `${agentId} completed using ${result.model}.`,
-    timestamp: new Date().toISOString(),
-    data: result
-  });
+    providerCompletedEvent(agentId, result);
 
-  addMemory({
-    type: 'agent-output',
-    content: result.content,
-    metadata: {
+    addEvent({
+      id: `event-${events.length + 1}`,
+      type: 'agent.completed',
       agentId,
-      model: result.model
-    }
-  });
+      message: `${agentId} completed using ${result.model}.`,
+      timestamp: new Date().toISOString(),
+      data: result
+    });
 
-  return result.content;
+    await addMemory({
+      type: 'agent-output',
+      content: result.content,
+      metadata: {
+        agentId,
+        model: result.model,
+        usage: result.usage ?? null
+      }
+    });
+
+    return result.content;
+  } catch (error) {
+    providerErrorEvent(agentId, error);
+
+    await addMemory({
+      type: 'agent-error',
+      content: error.message,
+      metadata: {
+        agentId
+      }
+    });
+
+    throw error;
+  }
 }
-
-app.get('/', async () => {
-  return {
-    status: 'ok',
-    service: 'advanced-agent-os-api',
-    health: '/health'
-  };
-});
 
 app.get('/health', async () => {
   return {
     status: 'ok',
     service: 'advanced-agent-os-api'
   };
-});
-app.get('/test-groq', async () => {
-  try {
-    const result = await provider.complete([
-      {
-        role: 'system',
-        content: 'You are a helpful AI.'
-      },
-      {
-        role: 'user',
-        content: 'Say hello from Groq in one short sentence.'
-      }
-    ]);
-
-    return {
-      success: true,
-      result
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : String(error)
-    };
-  }
-});
-
-app.get('/debug/routes', async () => {
-  return {
-    routes: [
-      'GET /',
-      'GET /health',
-      'GET /debug/routes',
-      'GET /test-run-demo',
-      'GET /agents',
-      'GET /events',
-      'GET /memory',
-      'GET /memory/search?q=query',
-      'POST /tools/run-command',
-      'POST /run-demo',
-      'POST /run-ai-demo',
-      'POST /run-agent-chain',
-      'WS /ws/events'
-    ]
-  };
-});
-
-app.get('/test-run-demo', async () => {
-  const response = await app.inject({
-    method: 'POST',
-    url: '/run-demo'
-  });
-
-  try {
-    return JSON.parse(response.body);
-  } catch {
-    return {
-      statusCode: response.statusCode,
-      body: response.body
-    };
-  }
 });
 
 app.get('/agents', async () => {
@@ -233,7 +239,7 @@ app.post('/tools/run-command', async request => {
     data: result
   });
 
-  addMemory({
+  await addMemory({
     type: 'tool-command-result',
     content: JSON.stringify(result, null, 2),
     metadata: {
@@ -275,47 +281,81 @@ app.post('/run-demo', async () => {
 app.post('/run-ai-demo', async request => {
   const body = request.body ?? {};
   const prompt = body.prompt ?? 'Create a short architecture plan for an AI SaaS dashboard.';
+  const agentId = 'project-manager';
 
   addEvent({
     id: `event-${events.length + 1}`,
-    type: 'task',
+    type: 'task.started',
+    agentId,
     message: 'AI demo task started by Project Manager Agent.',
-    timestamp: new Date().toISOString()
-  });
-
-  const result = await provider.complete([
-    {
-      role: 'system',
-      content: 'You are the Project Manager Agent inside Advanced Agent OS. Return a concise engineering plan.'
-    },
-    {
-      role: 'user',
-      content: prompt
-    }
-  ]);
-
-  addEvent({
-    id: `event-${events.length + 1}`,
-    type: 'agent',
-    message: `AI provider responded with model ${result.model}.`,
     timestamp: new Date().toISOString(),
-    data: result
+    data: { prompt }
   });
 
-  addMemory({
-    type: 'ai-demo-result',
-    content: result.content,
-    metadata: {
+  try {
+    const result = await provider.complete([
+      {
+        role: 'system',
+        content: 'You are the Project Manager Agent inside Advanced Agent OS. Return a concise engineering plan.'
+      },
+      {
+        role: 'user',
+        content: prompt
+      }
+    ]);
+
+    providerCompletedEvent(agentId, result);
+
+    const memoryRecord = await addMemory({
+      type: 'ai-demo-result',
+      content: result.content,
+      metadata: {
+        agentId,
+        prompt,
+        model: result.model,
+        usage: result.usage ?? null
+      }
+    });
+
+    addEvent({
+      id: `event-${events.length + 1}`,
+      type: 'task.completed',
+      agentId,
+      message: `Run AI Demo completed with model ${result.model}.`,
+      timestamp: new Date().toISOString(),
+      data: {
+        model: result.model,
+        memoryRecordId: memoryRecord.id
+      }
+    });
+
+    return {
+      success: true,
       prompt,
-      model: result.model
-    }
-  });
+      result,
+      memoryRecord
+    };
+  } catch (error) {
+    providerErrorEvent(agentId, error);
 
-  return {
-    success: true,
-    prompt,
-    result
-  };
+    const memoryRecord = await addMemory({
+      type: 'ai-demo-error',
+      content: error.message,
+      metadata: {
+        agentId,
+        prompt
+      }
+    });
+
+    request.log.error({ error }, 'run-ai-demo failed');
+
+    return {
+      success: false,
+      prompt,
+      error: error.message,
+      memoryRecord
+    };
+  }
 });
 
 app.post('/run-agent-chain', async request => {
@@ -324,80 +364,112 @@ app.post('/run-agent-chain', async request => {
 
   addEvent({
     id: `event-${events.length + 1}`,
-    type: 'task',
+    type: 'task.started',
     message: 'Multi-agent chain started.',
     timestamp: new Date().toISOString(),
     data: { goal }
   });
 
-  const projectPlan = await runAgentStep(
-    'project-manager',
-    'You are the Project Manager Agent. Break the user goal into a concise engineering execution plan.',
-    goal
-  );
+  try {
+    const projectPlan = await runAgentStep(
+      'project-manager',
+      'You are the Project Manager Agent. Break the user goal into a concise engineering execution plan.',
+      goal
+    );
 
-  const architecture = await runAgentStep(
-    'architect',
-    'You are the Architect Agent. Convert the project plan into a technical architecture with modules and data flow.',
-    projectPlan
-  );
+    const architecture = await runAgentStep(
+      'architect',
+      'You are the Architect Agent. Convert the project plan into a technical architecture with modules and data flow.',
+      projectPlan
+    );
 
-  const backendPlan = await runAgentStep(
-    'backend',
-    'You are the Backend Agent. Produce API, database and service implementation tasks from the architecture.',
-    architecture
-  );
+    const backendPlan = await runAgentStep(
+      'backend',
+      'You are the Backend Agent. Produce API, database and service implementation tasks from the architecture.',
+      architecture
+    );
 
-  const frontendPlan = await runAgentStep(
-    'frontend',
-    'You are the Frontend Agent. Produce UI screens, components and state management tasks from the architecture.',
-    architecture
-  );
+    const frontendPlan = await runAgentStep(
+      'frontend',
+      'You are the Frontend Agent. Produce UI screens, components and state management tasks from the architecture.',
+      architecture
+    );
 
-  const qaPlan = await runAgentStep(
-    'qa',
-    'You are the QA Agent. Review the backend and frontend plans and produce a practical test strategy.',
-    `Backend plan:\n${backendPlan}\n\nFrontend plan:\n${frontendPlan}`
-  );
+    const qaPlan = await runAgentStep(
+      'qa',
+      'You are the QA Agent. Review the backend and frontend plans and produce a practical test strategy.',
+      `Backend plan:\n${backendPlan}\n\nFrontend plan:\n${frontendPlan}`
+    );
 
-  const finalResult = {
-    goal,
-    projectPlan,
-    architecture,
-    backendPlan,
-    frontendPlan,
-    qaPlan
-  };
-
-  addMemory({
-    type: 'agent-chain-artifact',
-    content: JSON.stringify(finalResult, null, 2),
-    metadata: {
+    const finalResult = {
       goal,
-      agents: ['project-manager', 'architect', 'backend', 'frontend', 'qa']
-    }
-  });
+      projectPlan,
+      architecture,
+      backendPlan,
+      frontendPlan,
+      qaPlan
+    };
 
-  addEvent({
-    id: `event-${events.length + 1}`,
-    type: 'artifact.created',
-    message: 'Multi-agent chain completed and produced final execution artifact.',
-    timestamp: new Date().toISOString(),
-    data: finalResult
-  });
+    const memoryRecord = await addMemory({
+      type: 'agent-chain-artifact',
+      content: JSON.stringify(finalResult, null, 2),
+      metadata: {
+        goal,
+        agents: ['project-manager', 'architect', 'backend', 'frontend', 'qa']
+      }
+    });
 
-  return {
-    success: true,
-    result: finalResult
-  };
+    addEvent({
+      id: `event-${events.length + 1}`,
+      type: 'artifact.created',
+      message: 'Multi-agent chain completed and produced final execution artifact.',
+      timestamp: new Date().toISOString(),
+      data: {
+        ...finalResult,
+        memoryRecordId: memoryRecord.id
+      }
+    });
+
+    addEvent({
+      id: `event-${events.length + 1}`,
+      type: 'task.completed',
+      message: 'Multi-agent chain completed successfully.',
+      timestamp: new Date().toISOString(),
+      data: {
+        goal,
+        memoryRecordId: memoryRecord.id
+      }
+    });
+
+    return {
+      success: true,
+      result: finalResult,
+      memoryRecord
+    };
+  } catch (error) {
+    providerErrorEvent('agent-chain', error);
+
+    const memoryRecord = await addMemory({
+      type: 'agent-chain-error',
+      content: error.message,
+      metadata: {
+        goal
+      }
+    });
+
+    request.log.error({ error }, 'run-agent-chain failed');
+
+    return {
+      success: false,
+      error: error.message,
+      memoryRecord
+    };
+  }
 });
 
-const port = Number(process.env.PORT) || 3000;
-const host = process.env.HOST || '0.0.0.0';
-
-app.listen({ port, host })
+app.listen({ port: 3000, host: '0.0.0.0' })
   .then(() => {
-    console.log(`API server started on ${host}:${port}`);
+    console.log('API server started on port 3000');
   })
   .catch(error => {
     console.error(error);
