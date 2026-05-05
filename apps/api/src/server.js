@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 
 import { InMemoryStore } from '../../../packages/memory/in-memory-store.js';
@@ -6,6 +7,13 @@ import { OpenAiCompatibleProvider } from '../../../packages/providers/openai-pro
 import { SafeCommandRunner } from '../../../packages/tools/safe-command-runner.js';
 
 const app = Fastify({ logger: true });
+
+await app.register(cors, {
+  origin: true,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  credentials: false
+});
+
 await app.register(websocket);
 
 const provider = new OpenAiCompatibleProvider();
