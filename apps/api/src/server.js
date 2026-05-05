@@ -1,5 +1,5 @@
 import Fastify from 'fastify';
-import cors from '@fastify/cors';
+
 import websocket from '@fastify/websocket';
 
 import { InMemoryStore } from '../../../packages/memory/in-memory-store.js';
@@ -7,19 +7,16 @@ import { OpenAiCompatibleProvider } from '../../../packages/providers/openai-pro
 import { SafeCommandRunner } from '../../../packages/tools/safe-command-runner.js';
 
 const app = Fastify({ logger: true });
-app.options('*', async (request, reply) => {
-  reply
-    .header('Access-Control-Allow-Origin', '*')
-    .header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
-    .header('Access-Control-Allow-Headers', 'Content-Type')
-    .status(204)
-    .send();
+app.addHook('onRequest', async (request, reply) => {
+  reply.header('Access-Control-Allow-Origin', '*');
+  reply.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  if (request.method === 'OPTIONS') {
+    reply.code(204).send();
+  }
 });
-await app.register(cors, {
-  origin: true,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  credentials: false
-});
+
 
 await app.register(websocket);
 
