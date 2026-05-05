@@ -98,6 +98,14 @@ async function runAgentStep(agentId, systemPrompt, userPrompt) {
   return result.content;
 }
 
+app.get('/', async () => {
+  return {
+    status: 'ok',
+    service: 'advanced-agent-os-api',
+    health: '/health'
+  };
+});
+
 app.get('/health', async () => {
   return {
     status: 'ok',
@@ -312,9 +320,12 @@ app.post('/run-agent-chain', async request => {
   };
 });
 
-app.listen({ port: 3000, host: '0.0.0.0' })
+const port = Number(process.env.PORT) || 3000;
+const host = process.env.HOST || '0.0.0.0';
+
+app.listen({ port, host })
   .then(() => {
-    console.log('API server started on port 3000');
+    console.log(`API server started on ${host}:${port}`);
   })
   .catch(error => {
     console.error(error);
