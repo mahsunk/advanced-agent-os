@@ -3,6 +3,21 @@ import type { DashboardEvent } from '../events';
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
 const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
 
+function showMobileDebug(title: string, payload: unknown) {
+  const text = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+  window.alert(`${title}\n\nAPI_BASE_URL: ${API_BASE_URL}\n\n${text}`);
+}
+
+async function readResponseBody(response: Response) {
+  const text = await response.text();
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
 export type MemoryRecord = {
   id: string;
   type: string;
@@ -63,23 +78,47 @@ export async function runCommandTool(command: string, agentId = 'manual-operator
     body: JSON.stringify({ command, agentId })
   });
 
+  const data = await readResponseBody(response);
+  showMobileDebug('COMMAND DEBUG', {
+    ok: response.ok,
+    status: response.status,
+    statusText: response.statusText,
+    data
+  });
+
   if (!response.ok) {
     throw new Error('Failed to run command tool');
   }
 
-  return response.json();
+  return data as CommandResult;
 }
 
 export async function runDemoOrchestration() {
-  const response = await fetch(`${API_BASE_URL}/run-demo`, {
-    method: 'POST'
-  });
+  try {
+    const response = await fetch(`${API_BASE_URL}/run-demo`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
 
-  if (!response.ok) {
-    throw new Error('Failed to run demo orchestration');
+    const data = await readResponseBody(response);
+    showMobileDebug('RUN DEMO DEBUG', {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      data
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to run demo orchestration');
+    }
+
+    return data;
+  } catch (error) {
+    showMobileDebug('RUN DEMO NETWORK ERROR', error instanceof Error ? error.message : String(error));
+    throw error;
   }
-
-  return response.json();
 }
 
 export async function runAiDemo(prompt: string) {
@@ -91,11 +130,19 @@ export async function runAiDemo(prompt: string) {
     body: JSON.stringify({ prompt })
   });
 
+  const data = await readResponseBody(response);
+  showMobileDebug('AI DEMO DEBUG', {
+    ok: response.ok,
+    status: response.status,
+    statusText: response.statusText,
+    data
+  });
+
   if (!response.ok) {
     throw new Error('Failed to run AI demo');
   }
 
-  return response.json();
+  return data;
 }
 
 export async function runAgentChain(prompt: string) {
@@ -107,11 +154,19 @@ export async function runAgentChain(prompt: string) {
     body: JSON.stringify({ prompt })
   });
 
+  const data = await readResponseBody(response);
+  showMobileDebug('AGENT CHAIN DEBUG', {
+    ok: response.ok,
+    status: response.status,
+    statusText: response.statusText,
+    data
+  });
+
   if (!response.ok) {
     throw new Error('Failed to run agent chain');
   }
 
-  return response.json();
+  return data;
 }
 
 export function subscribeToEvents(onEvent: (event: DashboardEvent) => void) {
