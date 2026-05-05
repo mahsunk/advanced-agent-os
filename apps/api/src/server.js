@@ -124,6 +124,30 @@ app.get('/health', async () => {
     service: 'advanced-agent-os-api'
   };
 });
+app.get('/test-groq', async () => {
+  try {
+    const result = await provider.complete([
+      {
+        role: 'system',
+        content: 'You are a helpful AI.'
+      },
+      {
+        role: 'user',
+        content: 'Say hello from Groq in one short sentence.'
+      }
+    ]);
+
+    return {
+      success: true,
+      result
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+});
 
 app.get('/debug/routes', async () => {
   return {
