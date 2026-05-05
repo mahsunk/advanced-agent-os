@@ -10,6 +10,7 @@ import { SafeCommandRunner } from '../../../packages/tools/safe-command-runner.j
 const app = Fastify({ logger: true });
 await app.register(websocket);
 
+const PORT = process.env.PORT || 3000;
 const provider = new OpenAiCompatibleProvider();
 const memory = new InMemoryStore();
 const commandRunner = new SafeCommandRunner();
@@ -467,9 +468,9 @@ app.post('/run-agent-chain', async request => {
   }
 });
 
-app.listen({ port: 3000, host: '0.0.0.0' })
+app.listen({ port: PORT, host: '0.0.0.0' })
   .then(() => {
-    console.log('API server started on port 3000');
+    console.log(`API listening on ${PORT}`);
   })
   .catch(error => {
     console.error(error);
