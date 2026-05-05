@@ -1,0 +1,1 @@
+This file is intentionally unused. It was created only to verify write access after GitHub update_file conflicts. The actual OPTIONS preflight fix should be applied in apps/api/src/server.js.
