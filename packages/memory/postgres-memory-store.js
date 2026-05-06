@@ -8,7 +8,10 @@ export class PostgresMemoryStore {
       connectionString,
       ssl: {
         rejectUnauthorized: false
-      }
+      },
+      connectionTimeoutMillis: Number(process.env.POSTGRES_CONNECTION_TIMEOUT_MS ?? 10000),
+      idleTimeoutMillis: Number(process.env.POSTGRES_IDLE_TIMEOUT_MS ?? 30000),
+      max: Number(process.env.POSTGRES_POOL_MAX ?? 5)
     });
   }
 
