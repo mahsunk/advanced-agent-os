@@ -1,9 +1,8 @@
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
-import fs from 'node:fs/promises';
-import path from 'node:path';
 
 import { InMemoryStore } from '../../../packages/memory/in-memory-store.js';
+import { PostgresMemoryStore } from '../../../packages/memory/postgres-memory-store.js';
 import { OpenAiCompatibleProvider } from '../../../packages/providers/openai-provider.js';
 import { SafeCommandRunner } from '../../../packages/tools/safe-command-runner.js';
 
@@ -24,37 +23,10 @@ await app.register(websocket);
 
 const PORT = process.env.PORT || 3000;
 const provider = new OpenAiCompatibleProvider();
-const memory = new InMemoryStore();
+const memory = process.env.SUPABASE_DATABASE_URL
+  ? new PostgresMemoryStore(process.env.SUPABASE_DATABASE_URL)
+  : new InMemoryStore();
 const commandRunner = new SafeCommandRunner();
-const persistentMemoryFile = process.env.MEMORY_FILE_PATH ?? path.resolve(process.cwd(), 'data', 'memory.json');
-
-async function loadPersistentMemory() {
-  try {
-    const raw = await fs.readFile(persistentMemoryFile, 'utf8');
-    const parsed = JSON.parse(raw);
-
-    if (Array.isArray(parsed.records)) {
-      for (const record of parsed.records) {
-        memory.add(record);
-      }
-    }
-  } catch (error) {
-    if (error?.code !== 'ENOENT') {
-      app.log.warn({ error }, 'Failed to load persistent memory file');
-    }
-  }
-}
-
-async function persistMemory() {
-  await fs.mkdir(path.dirname(persistentMemoryFile), { recursive: true });
-  await fs.writeFile(
-    persistentMemoryFile,
-    JSON.stringify({ records: memory.list().reverse() }, null, 2),
-    'utf8'
-  );
-}
-
-await loadPersistentMemory();
 
 const agents = [
   'project-manager',
@@ -88,31 +60,20 @@ function broadcast(event) {
   }
 }
 
+function addEvent(event) {
+  events.push(event);
+  broadcast(event);
+  return event;
+}
+
 async function addMemory(record) {
-  const storedRecord = memory.add({
+  const storedRecord = await memory.add({
     ...record,
     metadata: {
       provider: provider.name,
       ...record.metadata
     }
   });
-
-  try {
-    await persistMemory();
-  } catch (error) {
-    addEvent({
-      id: `event-${events.length + 1}`,
-      type: 'memory.persist.error',
-      message: `Memory persist failed: ${error.message}`,
-      timestamp: new Date().toISOString(),
-      data: {
-        error: error.message,
-        memoryFile: persistentMemoryFile
-      }
-    });
-
-    app.log.warn({ error, persistentMemoryFile }, 'Failed to persist memory file');
-  }
 
   addEvent({
     id: `event-${events.length + 1}`,
@@ -220,6 +181,31 @@ app.get('/health', async () => {
   };
 });
 
+app.get('/debug/memory-state', async () => {
+  return {
+    provider: process.env.SUPABASE_DATABASE_URL ? 'postgres' : 'in-memory',
+    recordCount: (await memory.list()).length,
+    hasSupabaseDatabaseUrl: Boolean(process.env.SUPABASE_DATABASE_URL),
+    hasOpenAiKey: Boolean(process.env.OPENAI_API_KEY),
+    baseUrl: process.env.OPENAI_BASE_URL ?? null,
+    model: process.env.DEFAULT_MODEL ?? null
+  };
+});
+
+app.get('/test-memory', async () => {
+  const memoryRecord = await addMemory({
+    type: 'manual-test',
+    content: 'memory test',
+    metadata: { source: 'debug' }
+  });
+
+  return {
+    success: true,
+    memoryRecord,
+    records: await memory.list()
+  };
+});
+
 app.get('/test-groq', async (req, reply) => {
   try {
     const result = await provider.complete([
@@ -250,12 +236,12 @@ app.get('/events', async () => {
 });
 
 app.get('/memory', async () => {
-  return { records: memory.list() };
+  return { records: await memory.list() };
 });
 
 app.get('/memory/search', async request => {
   const query = request.query?.q ?? '';
-  return { records: query ? memory.search(query) : memory.list() };
+  return { records: query ? await memory.search(query) : await memory.list() };
 });
 
 app.get('/ws/events', { websocket: true }, connection => {
