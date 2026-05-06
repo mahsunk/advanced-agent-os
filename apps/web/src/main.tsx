@@ -4,6 +4,7 @@ import ReactDOM from 'react-dom/client';
 import {
   fetchEvents,
   fetchMemory,
+  generateProject,
   runAgentChain,
   runAiDemo,
   runCommandTool,
@@ -11,6 +12,7 @@ import {
   searchMemory,
   subscribeToEvents,
   type CommandResult,
+  type GeneratedProjectResponse,
   type MemoryRecord
 } from './api/client';
 import { AgentCard } from './components/AgentCard';
@@ -24,12 +26,16 @@ function App() {
   const [memoryRecords, setMemoryRecords] = useState<MemoryRecord[]>([]);
   const [memoryQuery, setMemoryQuery] = useState('');
   const [isRunning, setIsRunning] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [isAiRunning, setIsAiRunning] = useState(false);
   const [isChainRunning, setIsChainRunning] = useState(false);
   const [isCommandRunning, setIsCommandRunning] = useState(false);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
+  const [projectName, setProjectName] = useState('Launch Site MVP');
+  const [generatorPrompt, setGeneratorPrompt] = useState('Create a modern landing page for a small AI automation studio.');
   const [prompt, setPrompt] = useState('Create a short engineering plan for a multi-agent SaaS platform.');
   const [command, setCommand] = useState('npm run check');
+  const [generatedProject, setGeneratedProject] = useState<GeneratedProjectResponse | undefined>();
   const [aiResult, setAiResult] = useState<string | undefined>();
   const [chainResult, setChainResult] = useState<unknown>();
   const [commandResult, setCommandResult] = useState<CommandResult | undefined>();
@@ -52,6 +58,24 @@ function App() {
       setMemoryRecords(records);
     } catch {
       setMemoryRecords([]);
+    }
+  }
+
+  async function handleGenerateProject() {
+    setIsGenerating(true);
+
+    try {
+      const response = await generateProject(generatorPrompt, projectName);
+      setGeneratedProject(response);
+      await refreshEvents();
+      await refreshMemory();
+    } catch (error) {
+      setGeneratedProject({
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to generate project.'
+      });
+    } finally {
+      setIsGenerating(false);
     }
   }
 
@@ -119,7 +143,7 @@ function App() {
       setIsLiveConnected(true);
       setEvents(currentEvents => [event, ...currentEvents]);
 
-      if (event.type === 'memory.created') {
+      if (event.type === 'memory.created' || event.type === 'project.generation.completed') {
         refreshMemory();
       }
     });
@@ -128,7 +152,7 @@ function App() {
   }, []);
 
   return (
-    <div style={{ fontFamily: 'sans-serif', padding: 24, maxWidth: 960, margin: '0 auto' }}>
+    <div style={{ fontFamily: 'sans-serif', padding: 24, maxWidth: 1040, margin: '0 auto' }}>
       <header style={{ marginBottom: 32 }}>
         <h1>Advanced Agent OS</h1>
         <p>Realtime multi-agent orchestration dashboard.</p>
@@ -136,6 +160,49 @@ function App() {
           {isRunning ? 'Running demo...' : 'Run Demo Orchestration'}
         </button>
       </header>
+
+      <section style={{ marginBottom: 32, border: '1px solid #333', borderRadius: 8, padding: 18 }}>
+        <h2>Project Generator</h2>
+        <p>Generate a real Vite/React website file set, save the run to Supabase, and commit to GitHub when server env is configured.</p>
+        <input
+          value={projectName}
+          onChange={event => setProjectName(event.target.value)}
+          placeholder="Project name"
+          style={{ width: '100%', padding: 10, marginBottom: 12 }}
+        />
+        <textarea
+          value={generatorPrompt}
+          onChange={event => setGeneratorPrompt(event.target.value)}
+          rows={4}
+          placeholder="Describe the website or app to generate..."
+          style={{ width: '100%', padding: 12, marginBottom: 12 }}
+        />
+        <button onClick={handleGenerateProject} disabled={isGenerating || !generatorPrompt.trim()}>
+          {isGenerating ? 'Generating project...' : 'Generate Website Project'}
+        </button>
+
+        {generatedProject ? (
+          <div style={{ marginTop: 16 }}>
+            <h3>{generatedProject.success ? generatedProject.project?.name ?? 'Generated project' : 'Generation failed'}</h3>
+            {generatedProject.error ? <p>{generatedProject.error}</p> : null}
+            {generatedProject.run?.agentSummary ? <p>{generatedProject.run.agentSummary}</p> : null}
+            {generatedProject.github?.branchUrl ? (
+              <p><a href={generatedProject.github.branchUrl} target="_blank" rel="noreferrer">Open generated GitHub branch</a></p>
+            ) : null}
+            {generatedProject.github?.message ? <p>{generatedProject.github.message}</p> : null}
+            {generatedProject.github?.error ? <p>GitHub: {generatedProject.github.error}</p> : null}
+            {generatedProject.persistenceError ? <p>Persistence: {generatedProject.persistenceError}</p> : null}
+            {generatedProject.memoryError ? <p>Memory: {generatedProject.memoryError}</p> : null}
+            {generatedProject.files?.length ? (
+              <ul>
+                {generatedProject.files.map(file => (
+                  <li key={file.path}>{file.path} ({file.bytes} bytes)</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
 
       <section style={{ marginBottom: 32 }}>
         <h2>AI Runtime</h2>
@@ -154,12 +221,12 @@ function App() {
           </button>
         </div>
         {aiResult ? (
-          <pre style={{ whiteSpace: 'pre-wrap', border: '1px solid #333', borderRadius: 12, padding: 16, marginTop: 16 }}>
+          <pre style={{ whiteSpace: 'pre-wrap', border: '1px solid #333', borderRadius: 8, padding: 16, marginTop: 16 }}>
             {aiResult}
           </pre>
         ) : null}
         {chainResult ? (
-          <pre style={{ whiteSpace: 'pre-wrap', border: '1px solid #333', borderRadius: 12, padding: 16, marginTop: 16 }}>
+          <pre style={{ whiteSpace: 'pre-wrap', border: '1px solid #333', borderRadius: 8, padding: 16, marginTop: 16 }}>
             {JSON.stringify(chainResult, null, 2)}
           </pre>
         ) : null}
@@ -180,7 +247,7 @@ function App() {
           </button>
         </div>
         {commandResult ? (
-          <pre style={{ whiteSpace: 'pre-wrap', border: '1px solid #333', borderRadius: 12, padding: 16 }}>
+          <pre style={{ whiteSpace: 'pre-wrap', border: '1px solid #333', borderRadius: 8, padding: 16 }}>
             {JSON.stringify(commandResult, null, 2)}
           </pre>
         ) : null}
@@ -200,7 +267,7 @@ function App() {
         <p>Total memory records: {memoryRecords.length}</p>
         <div>
           {memoryRecords.map(record => (
-            <article key={record.id} style={{ border: '1px solid #333', borderRadius: 12, padding: 12, marginBottom: 12 }}>
+            <article key={record.id} style={{ border: '1px solid #333', borderRadius: 8, padding: 12, marginBottom: 12 }}>
               <strong>{record.type}</strong>
               <p>{record.createdAt}</p>
               <pre style={{ whiteSpace: 'pre-wrap', maxHeight: 180, overflow: 'auto' }}>{record.content}</pre>
@@ -214,7 +281,7 @@ function App() {
         <p>Total agents: {dashboardState.agents.length}</p>
         <p>Total events: {events.length}</p>
         <p>Live stream: {isLiveConnected ? 'connected' : 'waiting'}</p>
-        <p>Runtime: autonomous task graph + shared memory + tool execution.</p>
+        <p>Runtime: autonomous task graph + shared memory + project generation + tool execution.</p>
       </section>
 
       <section>
