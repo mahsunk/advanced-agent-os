@@ -75,7 +75,7 @@ function App() {
         .filter(Boolean)
         .join('\n');
 
-      setAiResult(response.result?.content ?? runtimeError ?? 'No AI result returned.');
+      setAiResult(response.result?.content || runtimeError || 'No AI result returned.');
       await refreshEvents();
       await refreshMemory();
     } catch (error) {
