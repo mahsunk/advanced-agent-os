@@ -33,6 +33,44 @@ export type CommandResult = {
   context: Record<string, unknown>;
 };
 
+export type GeneratedProjectFile = {
+  path: string;
+  bytes: number;
+};
+
+export type GeneratedProjectResponse = {
+  success: boolean;
+  project?: {
+    id: string;
+    name: string;
+    prompt: string;
+    status: string;
+    metadata?: Record<string, unknown>;
+    createdAt?: string;
+  };
+  run?: {
+    id: string;
+    projectId: string;
+    prompt: string;
+    status: string;
+    agentSummary: string;
+    metadata?: Record<string, unknown>;
+  };
+  files?: GeneratedProjectFile[];
+  github?: {
+    enabled: boolean;
+    repository?: string | null;
+    branch?: string;
+    filesCommitted?: number;
+    branchUrl?: string;
+    message?: string;
+    error?: string;
+  };
+  persistenceError?: string | null;
+  memoryError?: string | null;
+  error?: string;
+};
+
 export async function fetchEvents(): Promise<DashboardEvent[]> {
   const response = await fetch(`${API_BASE_URL}/events`);
 
@@ -64,6 +102,24 @@ export async function searchMemory(query: string): Promise<MemoryRecord[]> {
 
   const data = await response.json();
   return data.records ?? [];
+}
+
+export async function generateProject(prompt: string, projectName?: string): Promise<GeneratedProjectResponse> {
+  const response = await fetch(`${API_BASE_URL}/projects/generate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ prompt, projectName })
+  });
+
+  const data = await readResponseBody(response);
+
+  if (!response.ok) {
+    throw new Error(typeof data === 'string' ? data : data.error ?? 'Failed to generate project');
+  }
+
+  return data as GeneratedProjectResponse;
 }
 
 export async function runCommandTool(command: string, agentId = 'manual-operator'): Promise<CommandResult> {
