@@ -5,6 +5,7 @@ export class OpenAiCompatibleProvider {
     this.baseUrl = options.baseUrl ?? process.env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1';
     this.model = options.model ?? process.env.DEFAULT_MODEL ?? 'gpt-4o-mini';
     this.timeoutMs = Number(options.timeoutMs ?? process.env.PROVIDER_TIMEOUT_MS ?? 30000);
+    this.maxTokens = Number(options.maxTokens ?? process.env.PROVIDER_MAX_TOKENS ?? 400);
   }
 
   async complete(messages) {
@@ -29,7 +30,8 @@ export class OpenAiCompatibleProvider {
         body: JSON.stringify({
           model: this.model,
           messages,
-          temperature: 0.2
+          temperature: 0.2,
+          max_tokens: this.maxTokens
         })
       });
 
