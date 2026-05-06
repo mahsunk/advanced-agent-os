@@ -66,6 +66,16 @@ function addEvent(event) {
   return event;
 }
 
+function publicRuntimeState() {
+  return {
+    memoryProvider: process.env.SUPABASE_DATABASE_URL ? 'postgres' : 'in-memory',
+    hasSupabaseDatabaseUrl: Boolean(process.env.SUPABASE_DATABASE_URL),
+    hasOpenAiKey: Boolean(process.env.OPENAI_API_KEY),
+    baseUrl: process.env.OPENAI_BASE_URL ?? null,
+    model: process.env.DEFAULT_MODEL ?? null
+  };
+}
+
 async function addMemory(record) {
   const storedRecord = await memory.add({
     ...record,
@@ -84,6 +94,33 @@ async function addMemory(record) {
   });
 
   return storedRecord;
+}
+
+async function tryAddMemory(record, request) {
+  try {
+    return {
+      memoryRecord: await addMemory(record),
+      memoryError: null
+    };
+  } catch (error) {
+    request?.log?.error({ error }, 'memory write failed');
+
+    addEvent({
+      id: `event-${events.length + 1}`,
+      type: 'memory.error',
+      message: `Memory write failed: ${error.message}`,
+      timestamp: new Date().toISOString(),
+      data: {
+        error: error.message,
+        ...publicRuntimeState()
+      }
+    });
+
+    return {
+      memoryRecord: null,
+      memoryError: error.message
+    };
+  }
 }
 
 function providerCompletedEvent(agentId, result) {
@@ -115,7 +152,7 @@ function providerErrorEvent(agentId, error) {
   });
 }
 
-async function runAgentStep(agentId, systemPrompt, userPrompt) {
+async function runAgentStep(agentId, systemPrompt, userPrompt, request) {
   addEvent({
     id: `event-${events.length + 1}`,
     type: 'agent.started',
@@ -141,7 +178,7 @@ async function runAgentStep(agentId, systemPrompt, userPrompt) {
       data: result
     });
 
-    await addMemory({
+    await tryAddMemory({
       type: 'agent-output',
       content: result.content,
       metadata: {
@@ -149,19 +186,19 @@ async function runAgentStep(agentId, systemPrompt, userPrompt) {
         model: result.model,
         usage: result.usage ?? null
       }
-    });
+    }, request);
 
     return result.content;
   } catch (error) {
     providerErrorEvent(agentId, error);
 
-    await addMemory({
+    await tryAddMemory({
       type: 'agent-error',
       content: error.message,
       metadata: {
         agentId
       }
-    });
+    }, request);
 
     throw error;
   }
@@ -181,23 +218,37 @@ app.get('/health', async () => {
   };
 });
 
-app.get('/debug/memory-state', async () => {
-  return {
-    provider: process.env.SUPABASE_DATABASE_URL ? 'postgres' : 'in-memory',
-    recordCount: (await memory.list()).length,
-    hasSupabaseDatabaseUrl: Boolean(process.env.SUPABASE_DATABASE_URL),
-    hasOpenAiKey: Boolean(process.env.OPENAI_API_KEY),
-    baseUrl: process.env.OPENAI_BASE_URL ?? null,
-    model: process.env.DEFAULT_MODEL ?? null
-  };
+app.get('/debug/memory-state', async (request, reply) => {
+  try {
+    return {
+      ...publicRuntimeState(),
+      recordCount: (await memory.list()).length
+    };
+  } catch (error) {
+    request.log.error({ error }, 'memory state check failed');
+
+    return reply.code(500).send({
+      status: 'error',
+      error: error.message,
+      ...publicRuntimeState()
+    });
+  }
 });
 
-app.get('/test-memory', async () => {
-  const memoryRecord = await addMemory({
+app.get('/test-memory', async (request, reply) => {
+  const { memoryRecord, memoryError } = await tryAddMemory({
     type: 'manual-test',
     content: 'memory test',
     metadata: { source: 'debug' }
-  });
+  }, request);
+
+  if (memoryError) {
+    return reply.code(500).send({
+      success: false,
+      error: memoryError,
+      runtime: publicRuntimeState()
+    });
+  }
 
   return {
     success: true,
@@ -222,7 +273,8 @@ app.get('/test-groq', async (req, reply) => {
   } catch (error) {
     return reply.code(500).send({
       success: false,
-      error: error.message
+      error: error.message,
+      runtime: publicRuntimeState()
     });
   }
 });
@@ -235,13 +287,34 @@ app.get('/events', async () => {
   return { events };
 });
 
-app.get('/memory', async () => {
-  return { records: await memory.list() };
+app.get('/memory', async (request, reply) => {
+  try {
+    return { records: await memory.list() };
+  } catch (error) {
+    request.log.error({ error }, 'memory list failed');
+
+    return reply.code(500).send({
+      records: [],
+      error: error.message,
+      runtime: publicRuntimeState()
+    });
+  }
 });
 
-app.get('/memory/search', async request => {
+app.get('/memory/search', async (request, reply) => {
   const query = request.query?.q ?? '';
-  return { records: query ? await memory.search(query) : await memory.list() };
+
+  try {
+    return { records: query ? await memory.search(query) : await memory.list() };
+  } catch (error) {
+    request.log.error({ error }, 'memory search failed');
+
+    return reply.code(500).send({
+      records: [],
+      error: error.message,
+      runtime: publicRuntimeState()
+    });
+  }
 });
 
 app.get('/ws/events', { websocket: true }, connection => {
@@ -275,7 +348,7 @@ app.post('/tools/run-command', async request => {
     data: result
   });
 
-  await addMemory({
+  await tryAddMemory({
     type: 'tool-command-result',
     content: JSON.stringify(result, null, 2),
     metadata: {
@@ -284,7 +357,7 @@ app.post('/tools/run-command', async request => {
       mode: result.mode,
       success: result.success
     }
-  });
+  }, request);
 
   return result;
 });
@@ -342,7 +415,7 @@ app.post('/run-ai-demo', async request => {
 
     providerCompletedEvent(agentId, result);
 
-    const memoryRecord = await addMemory({
+    const { memoryRecord, memoryError } = await tryAddMemory({
       type: 'ai-demo-result',
       content: result.content,
       metadata: {
@@ -351,7 +424,7 @@ app.post('/run-ai-demo', async request => {
         model: result.model,
         usage: result.usage ?? null
       }
-    });
+    }, request);
 
     addEvent({
       id: `event-${events.length + 1}`,
@@ -361,7 +434,8 @@ app.post('/run-ai-demo', async request => {
       timestamp: new Date().toISOString(),
       data: {
         model: result.model,
-        memoryRecordId: memoryRecord.id
+        memoryRecordId: memoryRecord?.id ?? null,
+        memoryError
       }
     });
 
@@ -369,19 +443,20 @@ app.post('/run-ai-demo', async request => {
       success: true,
       prompt,
       result,
-      memoryRecord
+      memoryRecord,
+      memoryError
     };
   } catch (error) {
     providerErrorEvent(agentId, error);
 
-    const memoryRecord = await addMemory({
+    const { memoryRecord, memoryError } = await tryAddMemory({
       type: 'ai-demo-error',
       content: error.message,
       metadata: {
         agentId,
         prompt
       }
-    });
+    }, request);
 
     request.log.error({ error }, 'run-ai-demo failed');
 
@@ -389,7 +464,9 @@ app.post('/run-ai-demo', async request => {
       success: false,
       prompt,
       error: error.message,
-      memoryRecord
+      memoryRecord,
+      memoryError,
+      runtime: publicRuntimeState()
     };
   }
 });
@@ -410,31 +487,36 @@ app.post('/run-agent-chain', async request => {
     const projectPlan = await runAgentStep(
       'project-manager',
       'You are the Project Manager Agent. Break the user goal into a concise engineering execution plan.',
-      goal
+      goal,
+      request
     );
 
     const architecture = await runAgentStep(
       'architect',
       'You are the Architect Agent. Convert the project plan into a technical architecture with modules and data flow.',
-      projectPlan
+      projectPlan,
+      request
     );
 
     const backendPlan = await runAgentStep(
       'backend',
       'You are the Backend Agent. Produce API, database and service implementation tasks from the architecture.',
-      architecture
+      architecture,
+      request
     );
 
     const frontendPlan = await runAgentStep(
       'frontend',
       'You are the Frontend Agent. Produce UI screens, components and state management tasks from the architecture.',
-      architecture
+      architecture,
+      request
     );
 
     const qaPlan = await runAgentStep(
       'qa',
       'You are the QA Agent. Review the backend and frontend plans and produce a practical test strategy.',
-      `Backend plan:\n${backendPlan}\n\nFrontend plan:\n${frontendPlan}`
+      `Backend plan:\n${backendPlan}\n\nFrontend plan:\n${frontendPlan}`,
+      request
     );
 
     const finalResult = {
@@ -446,14 +528,14 @@ app.post('/run-agent-chain', async request => {
       qaPlan
     };
 
-    const memoryRecord = await addMemory({
+    const { memoryRecord, memoryError } = await tryAddMemory({
       type: 'agent-chain-artifact',
       content: JSON.stringify(finalResult, null, 2),
       metadata: {
         goal,
         agents: ['project-manager', 'architect', 'backend', 'frontend', 'qa']
       }
-    });
+    }, request);
 
     addEvent({
       id: `event-${events.length + 1}`,
@@ -462,7 +544,8 @@ app.post('/run-agent-chain', async request => {
       timestamp: new Date().toISOString(),
       data: {
         ...finalResult,
-        memoryRecordId: memoryRecord.id
+        memoryRecordId: memoryRecord?.id ?? null,
+        memoryError
       }
     });
 
@@ -473,32 +556,36 @@ app.post('/run-agent-chain', async request => {
       timestamp: new Date().toISOString(),
       data: {
         goal,
-        memoryRecordId: memoryRecord.id
+        memoryRecordId: memoryRecord?.id ?? null,
+        memoryError
       }
     });
 
     return {
       success: true,
       result: finalResult,
-      memoryRecord
+      memoryRecord,
+      memoryError
     };
   } catch (error) {
     providerErrorEvent('agent-chain', error);
 
-    const memoryRecord = await addMemory({
+    const { memoryRecord, memoryError } = await tryAddMemory({
       type: 'agent-chain-error',
       content: error.message,
       metadata: {
         goal
       }
-    });
+    }, request);
 
     request.log.error({ error }, 'run-agent-chain failed');
 
     return {
       success: false,
       error: error.message,
-      memoryRecord
+      memoryRecord,
+      memoryError,
+      runtime: publicRuntimeState()
     };
   }
 });
