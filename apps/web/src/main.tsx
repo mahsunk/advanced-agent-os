@@ -2,8 +2,10 @@ import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 
 import {
+  apiUrl,
   fetchEvents,
   fetchMemory,
+  fetchProjects,
   generateProject,
   runAgentChain,
   runAiDemo,
@@ -11,8 +13,11 @@ import {
   runDemoOrchestration,
   searchMemory,
   subscribeToEvents,
+  validateProject,
   type CommandResult,
+  type GeneratedProjectSummary,
   type GeneratedProjectResponse,
+  type ProjectValidation,
   type MemoryRecord
 } from './api/client';
 import { AgentCard } from './components/AgentCard';
@@ -36,6 +41,9 @@ function App() {
   const [prompt, setPrompt] = useState('Create a short engineering plan for a multi-agent SaaS platform.');
   const [command, setCommand] = useState('npm run check');
   const [generatedProject, setGeneratedProject] = useState<GeneratedProjectResponse | undefined>();
+  const [projects, setProjects] = useState<GeneratedProjectSummary[]>([]);
+  const [projectValidation, setProjectValidation] = useState<Record<string, ProjectValidation>>({});
+  const [validatingProjectId, setValidatingProjectId] = useState<string | undefined>();
   const [aiResult, setAiResult] = useState<string | undefined>();
   const [chainResult, setChainResult] = useState<unknown>();
   const [commandResult, setCommandResult] = useState<CommandResult | undefined>();
@@ -61,14 +69,30 @@ function App() {
     }
   }
 
+  async function refreshProjects() {
+    try {
+      const nextProjects = await fetchProjects();
+      setProjects(nextProjects);
+    } catch {
+      setProjects([]);
+    }
+  }
+
   async function handleGenerateProject() {
     setIsGenerating(true);
 
     try {
       const response = await generateProject(generatorPrompt, projectName);
       setGeneratedProject(response);
+      if (response.project?.id && response.validation) {
+        setProjectValidation(current => ({
+          ...current,
+          [response.project!.id]: response.validation!
+        }));
+      }
       await refreshEvents();
       await refreshMemory();
+      await refreshProjects();
     } catch (error) {
       setGeneratedProject({
         success: false,
@@ -135,9 +159,25 @@ function App() {
     }
   }
 
+  async function handleValidateProject(projectId: string) {
+    setValidatingProjectId(projectId);
+
+    try {
+      const response = await validateProject(projectId);
+      setProjectValidation(current => ({
+        ...current,
+        [projectId]: response.validation
+      }));
+      await refreshMemory();
+    } finally {
+      setValidatingProjectId(undefined);
+    }
+  }
+
   useEffect(() => {
     refreshEvents();
     refreshMemory();
+    refreshProjects();
 
     const unsubscribe = subscribeToEvents(event => {
       setIsLiveConnected(true);
@@ -145,6 +185,7 @@ function App() {
 
       if (event.type === 'memory.created' || event.type === 'project.generation.completed') {
         refreshMemory();
+        refreshProjects();
       }
     });
 
@@ -186,6 +227,9 @@ function App() {
             <h3>{generatedProject.success ? generatedProject.project?.name ?? 'Generated project' : 'Generation failed'}</h3>
             {generatedProject.error ? <p>{generatedProject.error}</p> : null}
             {generatedProject.run?.agentSummary ? <p>{generatedProject.run.agentSummary}</p> : null}
+            {generatedProject.project?.previewUrl ? (
+              <p><a href={apiUrl(generatedProject.project.previewUrl)} target="_blank" rel="noreferrer">Open live preview</a></p>
+            ) : null}
             {generatedProject.github?.branchUrl ? (
               <p><a href={generatedProject.github.branchUrl} target="_blank" rel="noreferrer">Open generated GitHub branch</a></p>
             ) : null}
@@ -193,6 +237,16 @@ function App() {
             {generatedProject.github?.error ? <p>GitHub: {generatedProject.github.error}</p> : null}
             {generatedProject.persistenceError ? <p>Persistence: {generatedProject.persistenceError}</p> : null}
             {generatedProject.memoryError ? <p>Memory: {generatedProject.memoryError}</p> : null}
+            {generatedProject.validation ? (
+              <div>
+                <strong>Validation: {generatedProject.validation.success ? 'passed' : 'needs attention'}</strong>
+                <ul>
+                  {generatedProject.validation.checks.map(check => (
+                    <li key={check.name}>{check.passed ? 'OK' : 'Fix'} - {check.message}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             {generatedProject.files?.length ? (
               <ul>
                 {generatedProject.files.map(file => (
@@ -202,6 +256,46 @@ function App() {
             ) : null}
           </div>
         ) : null}
+      </section>
+
+      <section style={{ marginBottom: 32, border: '1px solid #333', borderRadius: 8, padding: 18 }}>
+        <h2>Generated Projects</h2>
+        <button onClick={refreshProjects}>Refresh Projects</button>
+        <div style={{ marginTop: 16 }}>
+          {projects.length ? projects.map(project => {
+            const validation = projectValidation[project.id];
+            const rawFileCount = project.metadata?.fileCount;
+            const fileCount = typeof rawFileCount === 'number' ? rawFileCount : undefined;
+
+            return (
+              <article key={project.id} style={{ border: '1px solid #333', borderRadius: 8, padding: 14, marginBottom: 12 }}>
+                <h3>{project.name}</h3>
+                <p>Status: {project.status}{fileCount ? ` - ${fileCount} files` : ''}</p>
+                <p>{project.prompt}</p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                  {project.previewUrl ? (
+                    <a href={apiUrl(project.previewUrl)} target="_blank" rel="noreferrer">Preview</a>
+                  ) : null}
+                  <a href={apiUrl(`/projects/${project.id}`)} target="_blank" rel="noreferrer">JSON</a>
+                  <a href={apiUrl(`/projects/${project.id}/files`)} target="_blank" rel="noreferrer">Files</a>
+                  {project.branchName && project.githubRepo ? (
+                    <a href={`https://github.com/${project.githubRepo}/tree/${project.branchName}`} target="_blank" rel="noreferrer">GitHub branch</a>
+                  ) : null}
+                  <button onClick={() => handleValidateProject(project.id)} disabled={validatingProjectId === project.id}>
+                    {validatingProjectId === project.id ? 'Validating...' : 'Validate'}
+                  </button>
+                </div>
+                {validation ? (
+                  <ul>
+                    {validation.checks.map(check => (
+                      <li key={check.name}>{check.passed ? 'OK' : 'Fix'} - {check.message}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </article>
+            );
+          }) : <p>No generated projects yet.</p>}
+        </div>
       </section>
 
       <section style={{ marginBottom: 32 }}>
