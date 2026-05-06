@@ -8,7 +8,19 @@ import { OpenAiCompatibleProvider } from '../../../packages/providers/openai-pro
 import { SafeCommandRunner } from '../../../packages/tools/safe-command-runner.js';
 
 const app = Fastify({ logger: true });
+
+app.addHook('onRequest', async (request, reply) => {
+  reply.header('Access-Control-Allow-Origin', '*');
+  reply.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  if (request.method === 'OPTIONS') {
+    return reply.code(204).send();
+  }
+});
+
 await app.register(websocket);
+ 
 
 const PORT = process.env.PORT || 3000;
 const provider = new OpenAiCompatibleProvider();
