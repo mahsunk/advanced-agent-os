@@ -13,6 +13,9 @@
     "build:web": "npm run build --workspace @advanced-agent-os/web",
     "check": "npm run build:web"
   },
+  "dependencies": {
+    "pg": "^8.13.1"
+  },
   "engines": {
     "node": ">=20"
   }
