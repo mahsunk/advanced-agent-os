@@ -88,12 +88,6 @@ function broadcast(event) {
   }
 }
 
-function addEvent(event) {
-  events.push(event);
-  broadcast(event);
-  return event;
-}
-
 async function addMemory(record) {
   const storedRecord = memory.add({
     ...record,
@@ -103,7 +97,22 @@ async function addMemory(record) {
     }
   });
 
-  await persistMemory();
+  try {
+    await persistMemory();
+  } catch (error) {
+    addEvent({
+      id: `event-${events.length + 1}`,
+      type: 'memory.persist.error',
+      message: `Memory persist failed: ${error.message}`,
+      timestamp: new Date().toISOString(),
+      data: {
+        error: error.message,
+        memoryFile: persistentMemoryFile
+      }
+    });
+
+    app.log.warn({ error, persistentMemoryFile }, 'Failed to persist memory file');
+  }
 
   addEvent({
     id: `event-${events.length + 1}`,
