@@ -5,6 +5,10 @@ const API_BASE_URL = (import.meta.env.VITE_API_URL ?? 'http://localhost:3000')
   .replace(/\/+$/, '');
 const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
 
+export function apiUrl(path: string) {
+  return `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
 async function readResponseBody(response: Response) {
   const text = await response.text();
 
@@ -34,20 +38,41 @@ export type CommandResult = {
 };
 
 export type GeneratedProjectFile = {
+  id?: string;
+  projectId?: string;
+  runId?: string;
   path: string;
+  action?: string;
   bytes: number;
+  metadata?: Record<string, unknown>;
+  createdAt?: string | null;
+};
+
+export type GeneratedProjectSummary = {
+  id: string;
+  name: string;
+  prompt: string;
+  status: string;
+  githubRepo?: string | null;
+  branchName?: string | null;
+  metadata?: Record<string, unknown>;
+  createdAt?: string | null;
+  previewUrl?: string;
+};
+
+export type ProjectValidation = {
+  success: boolean;
+  checkedAt: string;
+  checks: Array<{
+    name: string;
+    passed: boolean;
+    message: string;
+  }>;
 };
 
 export type GeneratedProjectResponse = {
   success: boolean;
-  project?: {
-    id: string;
-    name: string;
-    prompt: string;
-    status: string;
-    metadata?: Record<string, unknown>;
-    createdAt?: string;
-  };
+  project?: GeneratedProjectSummary;
   run?: {
     id: string;
     projectId: string;
@@ -57,6 +82,7 @@ export type GeneratedProjectResponse = {
     metadata?: Record<string, unknown>;
   };
   files?: GeneratedProjectFile[];
+  validation?: ProjectValidation;
   github?: {
     enabled: boolean;
     repository?: string | null;
@@ -69,6 +95,21 @@ export type GeneratedProjectResponse = {
   persistenceError?: string | null;
   memoryError?: string | null;
   error?: string;
+};
+
+export type GeneratedProjectDetails = {
+  success: boolean;
+  project: GeneratedProjectSummary;
+  runs: Array<{
+    id: string;
+    projectId: string;
+    prompt: string;
+    status: string;
+    agentSummary: string;
+    metadata?: Record<string, unknown>;
+    createdAt?: string | null;
+  }>;
+  files: GeneratedProjectFile[];
 };
 
 export async function fetchEvents(): Promise<DashboardEvent[]> {
@@ -120,6 +161,45 @@ export async function generateProject(prompt: string, projectName?: string): Pro
   }
 
   return data as GeneratedProjectResponse;
+}
+
+export async function fetchProjects(): Promise<GeneratedProjectSummary[]> {
+  const response = await fetch(`${API_BASE_URL}/projects`);
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch generated projects');
+  }
+
+  const data = await response.json();
+  return data.projects ?? [];
+}
+
+export async function fetchProjectDetails(projectId: string): Promise<GeneratedProjectDetails> {
+  const response = await fetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}`);
+  const data = await readResponseBody(response);
+
+  if (!response.ok) {
+    throw new Error(typeof data === 'string' ? data : data.error ?? 'Failed to fetch project details');
+  }
+
+  return data as GeneratedProjectDetails;
+}
+
+export async function validateProject(projectId: string): Promise<{ success: boolean; validation: ProjectValidation }> {
+  const response = await fetch(`${API_BASE_URL}/projects/${encodeURIComponent(projectId)}/validate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({})
+  });
+  const data = await readResponseBody(response);
+
+  if (!response.ok) {
+    throw new Error(typeof data === 'string' ? data : data.error ?? 'Failed to validate project');
+  }
+
+  return data as { success: boolean; validation: ProjectValidation };
 }
 
 export async function runCommandTool(command: string, agentId = 'manual-operator'): Promise<CommandResult> {
