@@ -31,6 +31,7 @@ const commandRunner = new SafeCommandRunner();
 const generatedProjects = [];
 const generatedRuns = [];
 const generatedFileChanges = [];
+const sockets = new Set();
 
 const agents = [
   'project-manager',
@@ -45,26 +46,30 @@ const agents = [
   'docs'
 ];
 
-const events = [
-  {
-    id: 'api-event-1',
-    type: 'system',
-    message: 'Advanced Agent OS API initialized.',
-    timestamp: new Date().toISOString()
-  }
-];
+const events = [{
+  id: 'api-event-1',
+  type: 'system',
+  message: 'Advanced Agent OS API initialized.',
+  timestamp: new Date().toISOString()
+}];
 
-const sockets = new Set();
-
-function isOpenSocket(socket) {
-  return socket && typeof socket.send === 'function' && socket.readyState === 1;
+function publicRuntimeState() {
+  return {
+    memoryProvider: process.env.SUPABASE_DATABASE_URL ? 'postgres' : 'in-memory',
+    hasSupabaseDatabaseUrl: Boolean(process.env.SUPABASE_DATABASE_URL),
+    hasOpenAiKey: Boolean(process.env.OPENAI_API_KEY),
+    baseUrl: process.env.OPENAI_BASE_URL ?? null,
+    model: process.env.DEFAULT_MODEL ?? null,
+    hasGitHubToken: Boolean(process.env.GITHUB_TOKEN),
+    githubRepository: process.env.GITHUB_REPOSITORY ?? null
+  };
 }
 
 function broadcast(event) {
   const payload = JSON.stringify(event);
 
   for (const socket of [...sockets]) {
-    if (!isOpenSocket(socket)) {
+    if (!socket || socket.readyState !== 1) {
       sockets.delete(socket);
       continue;
     }
@@ -84,18 +89,6 @@ function addEvent(event) {
   return event;
 }
 
-function publicRuntimeState() {
-  return {
-    memoryProvider: process.env.SUPABASE_DATABASE_URL ? 'postgres' : 'in-memory',
-    hasSupabaseDatabaseUrl: Boolean(process.env.SUPABASE_DATABASE_URL),
-    hasOpenAiKey: Boolean(process.env.OPENAI_API_KEY),
-    baseUrl: process.env.OPENAI_BASE_URL ?? null,
-    model: process.env.DEFAULT_MODEL ?? null,
-    hasGitHubToken: Boolean(process.env.GITHUB_TOKEN),
-    githubRepository: process.env.GITHUB_REPOSITORY ?? null
-  };
-}
-
 function slugify(value) {
   return String(value ?? 'generated-project')
     .toLowerCase()
@@ -105,10 +98,7 @@ function slugify(value) {
 }
 
 function titleFromPrompt(prompt) {
-  const cleaned = String(prompt ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 80);
+  const cleaned = String(prompt ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
 
   if (!cleaned) {
     return 'Generated Web Project';
@@ -130,14 +120,29 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-function jsString(value) {
-  return JSON.stringify(String(value ?? ''));
+function parseMetadata(metadata) {
+  if (!metadata) {
+    return {};
+  }
+
+  if (typeof metadata === 'string') {
+    try {
+      return JSON.parse(metadata);
+    } catch {
+      return {};
+    }
+  }
+
+  return metadata;
+}
+
+function projectPreviewUrl(projectId) {
+  return `/projects/${projectId}/preview`;
 }
 
 function buildWebsiteFiles({ prompt, projectName, rootPath }) {
   const title = projectName || titleFromPrompt(prompt);
   const slug = slugify(title);
-  const escapedPrompt = escapeHtml(prompt);
   const features = [
     'Responsive first screen with a clear offer',
     'Service cards generated from the project brief',
@@ -171,21 +176,147 @@ function buildWebsiteFiles({ prompt, projectName, rootPath }) {
     },
     {
       path: `${rootPath}/index.html`,
-      content: `<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="UTF-8" />\n    <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n    <title>${escapeHtml(title)}</title>\n  </head>\n  <body>\n    <div id="root"></div>\n    <script type="module" src="/src/main.jsx"></script>\n  </body>\n</html>\n`
+      content: `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${escapeHtml(title)}</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+`
     },
     {
       path: `${rootPath}/src/main.jsx`,
-      content: `import React from 'react';\nimport ReactDOM from 'react-dom/client';\nimport { ArrowRight, CheckCircle2, Sparkles } from 'lucide-react';\n\nimport './styles.css';\n\nconst projectTitle = ${jsString(title)};\nconst projectPrompt = ${jsString(prompt)};\nconst features = ${JSON.stringify(features, null, 2)};\n\nfunction App() {\n  return (\n    <main>\n      <section className="hero">\n        <nav>\n          <strong>{projectTitle}</strong>\n          <a href="#contact">Start</a>\n        </nav>\n\n        <div className="heroGrid">\n          <div>\n            <p className="eyebrow"><Sparkles size={16} /> AI generated launch page</p>\n            <h1>{projectTitle}</h1>\n            <p className="lead">{projectPrompt}</p>\n            <div className="actions">\n              <a className="primary" href="#contact">Plan a launch <ArrowRight size={18} /></a>\n              <a className="secondary" href="#features">See details</a>\n            </div>\n          </div>\n\n          <aside className="panel">\n            <h2>Build Scope</h2>\n            <ul>\n              {features.map(feature => (\n                <li key={feature}><CheckCircle2 size={18} /> {feature}</li>\n              ))}\n            </ul>\n          </aside>\n        </div>\n      </section>\n\n      <section id="features" className="section">\n        <h2>What this site includes</h2>\n        <div className="cards">\n          {features.map((feature, index) => (\n            <article key={feature}>\n              <span>0{index + 1}</span>\n              <h3>{feature}</h3>\n              <p>Ready to customize with real copy, images, forms, and deployment settings.</p>\n            </article>\n          ))}\n        </div>\n      </section>\n\n      <section id="contact" className="cta">\n        <h2>Ready for the next iteration?</h2>\n        <p>Connect this generated project to GitHub, run a build, and deploy it as a Vercel preview.</p>\n        <a className="primary" href="mailto:hello@example.com">Contact team <ArrowRight size={18} /></a>\n      </section>\n    </main>\n  );\n}\n\nReactDOM.createRoot(document.getElementById('root')).render(<App />);\n`
+      content: `import React from 'react';
+import ReactDOM from 'react-dom/client';
+import { ArrowRight, CheckCircle2, Sparkles } from 'lucide-react';
+
+import './styles.css';
+
+const projectTitle = ${JSON.stringify(title)};
+const projectPrompt = ${JSON.stringify(prompt)};
+const features = ${JSON.stringify(features, null, 2)};
+
+function App() {
+  return (
+    <main>
+      <section className="hero">
+        <nav>
+          <strong>{projectTitle}</strong>
+          <a href="#contact">Start</a>
+        </nav>
+        <div className="heroGrid">
+          <div>
+            <p className="eyebrow"><Sparkles size={16} /> AI generated launch page</p>
+            <h1>{projectTitle}</h1>
+            <p className="lead">{projectPrompt}</p>
+            <div className="actions">
+              <a className="primary" href="#contact">Plan a launch <ArrowRight size={18} /></a>
+              <a className="secondary" href="#features">See details</a>
+            </div>
+          </div>
+          <aside className="panel">
+            <h2>Build Scope</h2>
+            <ul>
+              {features.map(feature => (
+                <li key={feature}><CheckCircle2 size={18} /> {feature}</li>
+              ))}
+            </ul>
+          </aside>
+        </div>
+      </section>
+      <section id="features" className="section">
+        <h2>What this site includes</h2>
+        <div className="cards">
+          {features.map((feature, index) => (
+            <article key={feature}>
+              <span>0{index + 1}</span>
+              <h3>{feature}</h3>
+              <p>Ready to customize with real copy, images, forms, and deployment settings.</p>
+            </article>
+          ))}
+        </div>
+      </section>
+      <section id="contact" className="cta">
+        <h2>Ready for the next iteration?</h2>
+        <p>Connect this generated project to GitHub, run a build, and deploy it as a Vercel preview.</p>
+        <a className="primary" href="mailto:hello@example.com">Contact team <ArrowRight size={18} /></a>
+      </section>
+    </main>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+`
     },
     {
       path: `${rootPath}/src/styles.css`,
-      content: `:root {\n  color: #172026;\n  background: #f6f8f7;\n  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;\n}\n\n* {\n  box-sizing: border-box;\n}\n\nbody {\n  margin: 0;\n}\n\na {\n  color: inherit;\n  text-decoration: none;\n}\n\nmain {\n  min-height: 100vh;\n}\n\n.hero {\n  min-height: 88vh;\n  padding: 28px;\n  background: linear-gradient(135deg, #f6f8f7 0%, #dceae4 48%, #f4d8be 100%);\n}\n\nnav {\n  align-items: center;\n  display: flex;\n  justify-content: space-between;\n  margin: 0 auto 72px;\n  max-width: 1120px;\n}\n\nnav strong {\n  font-size: 20px;\n}\n\nnav a, .secondary {\n  border: 1px solid rgba(23, 32, 38, 0.22);\n  border-radius: 8px;\n  padding: 10px 14px;\n}\n\n.heroGrid {\n  align-items: center;\n  display: grid;\n  gap: 40px;\n  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);\n  margin: 0 auto;\n  max-width: 1120px;\n}\n\n.eyebrow {\n  align-items: center;\n  display: inline-flex;\n  gap: 8px;\n  margin: 0 0 18px;\n  text-transform: uppercase;\n}\n\nh1 {\n  font-size: clamp(44px, 8vw, 92px);\n  line-height: 0.95;\n  margin: 0;\n  max-width: 850px;\n}\n\n.lead {\n  font-size: 22px;\n  line-height: 1.45;\n  max-width: 680px;\n}\n\n.actions {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 12px;\n  margin-top: 30px;\n}\n\n.primary {\n  align-items: center;\n  background: #172026;\n  border-radius: 8px;\n  color: white;\n  display: inline-flex;\n  gap: 10px;\n  padding: 13px 18px;\n}\n\n.panel, article {\n  background: rgba(255, 255, 255, 0.72);\n  border: 1px solid rgba(23, 32, 38, 0.12);\n  border-radius: 8px;\n  padding: 24px;\n}\n\n.panel ul {\n  display: grid;\n  gap: 14px;\n  list-style: none;\n  margin: 0;\n  padding: 0;\n}\n\n.panel li {\n  align-items: flex-start;\n  display: flex;\n  gap: 10px;\n}\n\n.section, .cta {\n  margin: 0 auto;\n  max-width: 1120px;\n  padding: 72px 28px;\n}\n\n.section h2, .cta h2 {\n  font-size: 40px;\n  margin: 0 0 28px;\n}\n\n.cards {\n  display: grid;\n  gap: 16px;\n  grid-template-columns: repeat(4, minmax(0, 1fr));\n}\n\narticle span {\n  color: #65756f;\n}\n\narticle h3 {\n  min-height: 72px;\n}\n\n.cta {\n  border-top: 1px solid rgba(23, 32, 38, 0.14);\n}\n\n.cta p {\n  font-size: 20px;\n  line-height: 1.5;\n  max-width: 720px;\n}\n\n@media (max-width: 820px) {\n  .heroGrid, .cards {\n    grid-template-columns: 1fr;\n  }\n\n  .hero {\n    padding: 20px;\n  }\n\n  nav {\n    margin-bottom: 48px;\n  }\n}\n`
+      content: `:root { color: #172026; background: #f6f8f7; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+a { color: inherit; text-decoration: none; }
+main { min-height: 100vh; }
+.hero { min-height: 88vh; padding: 28px; background: linear-gradient(135deg, #f6f8f7 0%, #dceae4 48%, #f4d8be 100%); }
+nav { align-items: center; display: flex; justify-content: space-between; margin: 0 auto 72px; max-width: 1120px; }
+nav strong { font-size: 20px; }
+nav a, .secondary { border: 1px solid rgba(23, 32, 38, 0.22); border-radius: 8px; padding: 10px 14px; }
+.heroGrid { align-items: center; display: grid; gap: 40px; grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr); margin: 0 auto; max-width: 1120px; }
+.eyebrow { align-items: center; display: inline-flex; gap: 8px; margin: 0 0 18px; text-transform: uppercase; }
+h1 { font-size: clamp(44px, 8vw, 92px); line-height: 0.95; margin: 0; max-width: 850px; }
+.lead { font-size: 22px; line-height: 1.45; max-width: 680px; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+.primary { align-items: center; background: #172026; border-radius: 8px; color: white; display: inline-flex; gap: 10px; padding: 13px 18px; }
+.panel, article { background: rgba(255, 255, 255, 0.72); border: 1px solid rgba(23, 32, 38, 0.12); border-radius: 8px; padding: 24px; }
+.panel ul { display: grid; gap: 14px; list-style: none; margin: 0; padding: 0; }
+.panel li { align-items: flex-start; display: flex; gap: 10px; }
+.section, .cta { margin: 0 auto; max-width: 1120px; padding: 72px 28px; }
+.section h2, .cta h2 { font-size: 40px; margin: 0 0 28px; }
+.cards { display: grid; gap: 16px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+article span { color: #65756f; }
+article h3 { min-height: 72px; }
+.cta { border-top: 1px solid rgba(23, 32, 38, 0.14); }
+.cta p { font-size: 20px; line-height: 1.5; max-width: 720px; }
+@media (max-width: 820px) { .heroGrid, .cards { grid-template-columns: 1fr; } .hero { padding: 20px; } nav { margin-bottom: 48px; } }
+`
     },
     {
       path: `${rootPath}/README.md`,
-      content: `# ${title}\n\nGenerated by Advanced Agent OS Project Generator.\n\n## Prompt\n\n${prompt}\n\n## Run locally\n\n\`\`\`bash\nnpm install\nnpm run dev\n\`\`\`\n\n## Build\n\n\`\`\`bash\nnpm run build\n\`\`\`\n`
+      content: `# ${title}
+
+Generated by Advanced Agent OS Project Generator.
+
+## Prompt
+
+${prompt}
+
+## Run locally
+
+\`\`\`bash
+npm install
+npm run dev
+\`\`\`
+
+## Build
+
+\`\`\`bash
+npm run build
+\`\`\`
+`
     }
   ];
+}
+
+async function queryDatabase(query, values = []) {
+  if (!memory.pool) {
+    return null;
+  }
+
+  return memory.pool.query(query, values);
 }
 
 async function addMemory(record) {
@@ -210,37 +341,19 @@ async function addMemory(record) {
 
 async function tryAddMemory(record, request) {
   try {
-    return {
-      memoryRecord: await addMemory(record),
-      memoryError: null
-    };
+    return { memoryRecord: await addMemory(record), memoryError: null };
   } catch (error) {
     request?.log?.error({ error }, 'memory write failed');
-
     addEvent({
       id: `event-${events.length + 1}`,
       type: 'memory.error',
       message: `Memory write failed: ${error.message}`,
       timestamp: new Date().toISOString(),
-      data: {
-        error: error.message,
-        ...publicRuntimeState()
-      }
+      data: { error: error.message, ...publicRuntimeState() }
     });
 
-    return {
-      memoryRecord: null,
-      memoryError: error.message
-    };
+    return { memoryRecord: null, memoryError: error.message };
   }
-}
-
-async function queryDatabase(query, values = []) {
-  if (!memory.pool) {
-    return null;
-  }
-
-  return memory.pool.query(query, values);
 }
 
 async function saveGeneratedProject({ project, run, files, github }, request) {
@@ -263,44 +376,28 @@ async function saveGeneratedProject({ project, run, files, github }, request) {
       await queryDatabase(
         `insert into project_runs (id, project_id, prompt, status, agent_summary, metadata)
          values ($1, $2, $3, $4, $5, $6::jsonb)`,
-        [
-          run.id,
-          project.id,
-          run.prompt,
-          run.status,
-          run.agentSummary,
-          JSON.stringify(run.metadata ?? {})
-        ]
+        [run.id, project.id, run.prompt, run.status, run.agentSummary, JSON.stringify(run.metadata ?? {})]
       );
 
       for (const file of files) {
         await queryDatabase(
           `insert into file_changes (id, project_id, run_id, path, action, new_content, metadata)
            values ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-          [
-            randomUUID(),
-            project.id,
-            run.id,
-            file.path,
-            'create',
-            file.content,
-            JSON.stringify({ bytes: file.content.length })
-          ]
+          [randomUUID(), project.id, run.id, file.path, 'create', file.content, JSON.stringify({ bytes: file.content.length })]
         );
       }
     } else {
       generatedProjects.push(project);
       generatedRuns.push(run);
-      generatedFileChanges.push(
-        ...files.map(file => ({
-          id: randomUUID(),
-          projectId: project.id,
-          runId: run.id,
-          path: file.path,
-          action: 'create',
-          newContent: file.content
-        }))
-      );
+      generatedFileChanges.push(...files.map(file => ({
+        id: randomUUID(),
+        projectId: project.id,
+        runId: run.id,
+        path: file.path,
+        action: 'create',
+        newContent: file.content,
+        metadata: { bytes: file.content.length }
+      })));
     }
 
     return null;
@@ -308,6 +405,221 @@ async function saveGeneratedProject({ project, run, files, github }, request) {
     request?.log?.error({ error }, 'generated project persistence failed');
     return error.message;
   }
+}
+
+function mapProject(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    prompt: row.prompt,
+    status: row.status,
+    githubRepo: row.github_repo ?? row.githubRepo ?? null,
+    branchName: row.branch_name ?? row.branchName ?? null,
+    metadata: parseMetadata(row.metadata),
+    createdAt: row.created_at ?? row.createdAt ?? null,
+    previewUrl: projectPreviewUrl(row.id)
+  };
+}
+
+function mapRun(row) {
+  return {
+    id: row.id,
+    projectId: row.project_id ?? row.projectId,
+    prompt: row.prompt,
+    status: row.status,
+    agentSummary: row.agent_summary ?? row.agentSummary ?? '',
+    metadata: parseMetadata(row.metadata),
+    createdAt: row.created_at ?? row.createdAt ?? null
+  };
+}
+
+function mapFileChange(row, includeContent = false) {
+  const metadata = parseMetadata(row.metadata);
+  const content = row.new_content ?? row.newContent ?? '';
+  const file = {
+    id: row.id,
+    projectId: row.project_id ?? row.projectId,
+    runId: row.run_id ?? row.runId,
+    path: row.path,
+    action: row.action,
+    bytes: metadata.bytes ?? content.length,
+    metadata,
+    createdAt: row.created_at ?? row.createdAt ?? null
+  };
+
+  return includeContent ? { ...file, content } : file;
+}
+
+async function getGeneratedProjectBundle(projectId) {
+  if (memory.pool) {
+    const projectResult = await queryDatabase(
+      `select id, name, prompt, status, github_repo, branch_name, metadata, created_at
+       from projects
+       where id = $1
+       limit 1`,
+      [projectId]
+    );
+
+    if (!projectResult.rows.length) {
+      return null;
+    }
+
+    const runsResult = await queryDatabase(
+      `select id, project_id, prompt, status, agent_summary, metadata, created_at
+       from project_runs
+       where project_id = $1
+       order by created_at desc`,
+      [projectId]
+    );
+    const filesResult = await queryDatabase(
+      `select id, project_id, run_id, path, action, new_content, metadata, created_at
+       from file_changes
+       where project_id = $1
+       order by path asc`,
+      [projectId]
+    );
+
+    return {
+      project: mapProject(projectResult.rows[0]),
+      runs: runsResult.rows.map(mapRun),
+      files: filesResult.rows.map(row => mapFileChange(row, true))
+    };
+  }
+
+  const project = generatedProjects.find(item => item.id === projectId);
+
+  if (!project) {
+    return null;
+  }
+
+  return {
+    project: mapProject(project),
+    runs: generatedRuns.filter(run => run.projectId === projectId).map(mapRun),
+    files: generatedFileChanges
+      .filter(file => file.projectId === projectId)
+      .map(file => mapFileChange(file, true))
+      .sort((left, right) => left.path.localeCompare(right.path))
+  };
+}
+
+function validateGeneratedFiles(files) {
+  const byPath = new Map(files.map(file => [file.path, file]));
+  const findFile = suffix => files.find(file => file.path.endsWith(suffix));
+  const packageFile = findFile('/package.json') ?? byPath.get('package.json');
+  const indexFile = findFile('/index.html') ?? byPath.get('index.html');
+  const mainFile = findFile('/src/main.jsx') ?? byPath.get('src/main.jsx');
+  const stylesFile = findFile('/src/styles.css') ?? byPath.get('src/styles.css');
+  const readmeFile = findFile('/README.md') ?? byPath.get('README.md');
+  const checks = [];
+
+  checks.push({
+    name: 'package-json-present',
+    passed: Boolean(packageFile),
+    message: packageFile ? 'package.json exists.' : 'package.json is missing.'
+  });
+
+  if (packageFile) {
+    try {
+      const parsed = JSON.parse(packageFile.content);
+      checks.push({
+        name: 'package-json-valid',
+        passed: Boolean(parsed.scripts?.dev && parsed.scripts?.build && parsed.dependencies?.react),
+        message: 'package.json parses and includes React/Vite scripts.'
+      });
+    } catch (error) {
+      checks.push({
+        name: 'package-json-valid',
+        passed: false,
+        message: `package.json is invalid JSON: ${error.message}`
+      });
+    }
+  }
+
+  checks.push({
+    name: 'index-entrypoint',
+    passed: Boolean(indexFile?.content.includes('/src/main.jsx')),
+    message: indexFile ? 'index.html points at the React entrypoint.' : 'index.html is missing.'
+  });
+  checks.push({
+    name: 'react-entrypoint',
+    passed: Boolean(mainFile?.content.includes('ReactDOM.createRoot') && mainFile?.content.includes("import './styles.css'")),
+    message: mainFile ? 'src/main.jsx mounts React and imports CSS.' : 'src/main.jsx is missing.'
+  });
+  checks.push({
+    name: 'styles-present',
+    passed: Boolean(stylesFile?.content.length > 200),
+    message: stylesFile ? 'src/styles.css contains generated styling.' : 'src/styles.css is missing.'
+  });
+  checks.push({
+    name: 'readme-present',
+    passed: Boolean(readmeFile?.content.includes('Generated by Advanced Agent OS')),
+    message: readmeFile ? 'README.md documents the generated project.' : 'README.md is missing.'
+  });
+
+  return {
+    success: checks.every(check => check.passed),
+    checks,
+    checkedAt: new Date().toISOString()
+  };
+}
+
+function buildProjectPreviewHtml(project, files) {
+  const metadata = parseMetadata(project.metadata);
+  const fileItems = files
+    .map(file => `<li><code>${escapeHtml(file.path)}</code><span>${Number(file.bytes ?? file.content?.length ?? 0).toLocaleString()} bytes</span></li>`)
+    .join('');
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(project.name)} Preview</title>
+    <style>
+      :root { color: #172026; background: #f6f8f7; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; }
+      main { min-height: 100vh; }
+      .hero { min-height: 70vh; padding: 28px; background: linear-gradient(135deg, #f6f8f7 0%, #dceae4 52%, #f4d8be 100%); }
+      .wrap { margin: 0 auto; max-width: 1120px; }
+      nav { align-items: center; display: flex; justify-content: space-between; margin-bottom: 72px; }
+      h1 { font-size: clamp(42px, 8vw, 88px); line-height: .96; margin: 0; max-width: 900px; }
+      .lead { font-size: 22px; line-height: 1.45; max-width: 760px; }
+      .pill { border: 1px solid rgba(23,32,38,.2); border-radius: 999px; display: inline-block; padding: 8px 12px; }
+      .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+      .button { background: #172026; border-radius: 8px; color: white; display: inline-block; padding: 13px 18px; text-decoration: none; }
+      .ghost { border: 1px solid rgba(23,32,38,.22); border-radius: 8px; color: inherit; display: inline-block; padding: 13px 18px; text-decoration: none; }
+      section { margin: 0 auto; max-width: 1120px; padding: 56px 28px; }
+      ul { display: grid; gap: 10px; list-style: none; padding: 0; }
+      li { align-items: center; background: white; border: 1px solid rgba(23,32,38,.12); border-radius: 8px; display: flex; justify-content: space-between; padding: 12px 14px; }
+      code { white-space: normal; word-break: break-word; }
+      @media (max-width: 720px) { nav, li { align-items: flex-start; flex-direction: column; gap: 10px; } .hero { padding: 20px; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="hero">
+        <div class="wrap">
+          <nav>
+            <strong>${escapeHtml(project.name)}</strong>
+            <span class="pill">${escapeHtml(project.status)}</span>
+          </nav>
+          <h1>${escapeHtml(project.name)}</h1>
+          <p class="lead">${escapeHtml(project.prompt)}</p>
+          <div class="actions">
+            <a class="button" href="/projects/${project.id}/files">Inspect files</a>
+            <a class="ghost" href="/projects/${project.id}">Project JSON</a>
+          </div>
+        </div>
+      </div>
+      <section>
+        <p class="pill">${escapeHtml(metadata.rootPath ?? 'generated project')}</p>
+        <h2>Generated file set</h2>
+        <ul>${fileItems}</ul>
+      </section>
+    </main>
+  </body>
+</html>`;
 }
 
 async function githubRequest(path, options = {}) {
@@ -327,7 +639,6 @@ async function githubRequest(path, options = {}) {
       ...(options.headers ?? {})
     }
   });
-
   const text = await response.text();
   const data = text ? JSON.parse(text) : null;
 
@@ -359,10 +670,7 @@ async function commitGeneratedFilesToGitHub({ branch, files, request }) {
     try {
       await githubRequest(`/repos/${repository}/git/refs`, {
         method: 'POST',
-        body: JSON.stringify({
-          ref: `refs/heads/${branch}`,
-          sha: baseRef.object.sha
-        })
+        body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: baseRef.object.sha })
       });
     } catch (error) {
       if (!String(error.message).includes('Reference already exists')) {
@@ -398,7 +706,6 @@ async function commitGeneratedFilesToGitHub({ branch, files, request }) {
           })
         }
       );
-
       commits.push(result.commit?.sha);
     }
 
@@ -412,14 +719,7 @@ async function commitGeneratedFilesToGitHub({ branch, files, request }) {
     };
   } catch (error) {
     request?.log?.error({ error }, 'GitHub commit failed');
-
-    return {
-      enabled: true,
-      repository,
-      branch,
-      filesCommitted: 0,
-      error: error.message
-    };
+    return { enabled: true, repository, branch, filesCommitted: 0, error: error.message };
   }
 }
 
@@ -430,11 +730,7 @@ function providerCompletedEvent(agentId, result) {
     agentId,
     message: `AI provider responded with model ${result.model}.`,
     timestamp: new Date().toISOString(),
-    data: {
-      provider: provider.name,
-      model: result.model,
-      usage: result.usage ?? null
-    }
+    data: { provider: provider.name, model: result.model, usage: result.usage ?? null }
   });
 }
 
@@ -445,10 +741,7 @@ function providerErrorEvent(agentId, error) {
     agentId,
     message: `AI provider failed for ${agentId}: ${error.message}`,
     timestamp: new Date().toISOString(),
-    data: {
-      provider: provider.name,
-      error: error.message
-    }
+    data: { provider: provider.name, error: error.message }
   });
 }
 
@@ -468,7 +761,6 @@ async function runAgentStep(agentId, systemPrompt, userPrompt, request) {
     ]);
 
     providerCompletedEvent(agentId, result);
-
     addEvent({
       id: `event-${events.length + 1}`,
       type: 'agent.completed',
@@ -477,42 +769,24 @@ async function runAgentStep(agentId, systemPrompt, userPrompt, request) {
       timestamp: new Date().toISOString(),
       data: result
     });
-
     await tryAddMemory({
       type: 'agent-output',
       content: result.content,
-      metadata: {
-        agentId,
-        model: result.model,
-        usage: result.usage ?? null
-      }
+      metadata: { agentId, model: result.model, usage: result.usage ?? null }
     }, request);
 
     return result.content;
   } catch (error) {
     providerErrorEvent(agentId, error);
-
-    await tryAddMemory({
-      type: 'agent-error',
-      content: error.message,
-      metadata: {
-        agentId
-      }
-    }, request);
-
+    await tryAddMemory({ type: 'agent-error', content: error.message, metadata: { agentId } }, request);
     throw error;
   }
 }
 
-app.get('/', async () => ({
-  status: 'ok',
-  service: 'advanced-agent-os'
-}));
-
-app.get('/health', async () => ({
-  status: 'ok',
-  service: 'advanced-agent-os-api'
-}));
+app.get('/', async () => ({ status: 'ok', service: 'advanced-agent-os' }));
+app.get('/health', async () => ({ status: 'ok', service: 'advanced-agent-os-api' }));
+app.get('/agents', async () => ({ agents }));
+app.get('/events', async () => ({ events }));
 
 app.get('/debug/memory-state', async (request, reply) => {
   try {
@@ -523,12 +797,7 @@ app.get('/debug/memory-state', async (request, reply) => {
     };
   } catch (error) {
     request.log.error({ error }, 'memory state check failed');
-
-    return reply.code(500).send({
-      status: 'error',
-      error: error.message,
-      ...publicRuntimeState()
-    });
+    return reply.code(500).send({ status: 'error', error: error.message, ...publicRuntimeState() });
   }
 });
 
@@ -540,57 +809,27 @@ app.get('/test-memory', async (request, reply) => {
   }, request);
 
   if (memoryError) {
-    return reply.code(500).send({
-      success: false,
-      error: memoryError,
-      runtime: publicRuntimeState()
-    });
+    return reply.code(500).send({ success: false, error: memoryError, runtime: publicRuntimeState() });
   }
 
-  return {
-    success: true,
-    memoryRecord,
-    records: await memory.list()
-  };
+  return { success: true, memoryRecord, records: await memory.list() };
 });
 
 app.get('/test-groq', async (request, reply) => {
   try {
-    const result = await provider.complete([
-      {
-        role: 'user',
-        content: 'Say hello from Groq'
-      }
-    ]);
-
-    return {
-      success: true,
-      result
-    };
+    const result = await provider.complete([{ role: 'user', content: 'Say hello from Groq' }]);
+    return { success: true, result };
   } catch (error) {
-    return reply.code(500).send({
-      success: false,
-      error: error.message,
-      runtime: publicRuntimeState()
-    });
+    return reply.code(500).send({ success: false, error: error.message, runtime: publicRuntimeState() });
   }
 });
-
-app.get('/agents', async () => ({ agents }));
-
-app.get('/events', async () => ({ events }));
 
 app.get('/memory', async (request, reply) => {
   try {
     return { records: await memory.list() };
   } catch (error) {
     request.log.error({ error }, 'memory list failed');
-
-    return reply.code(500).send({
-      records: [],
-      error: error.message,
-      runtime: publicRuntimeState()
-    });
+    return reply.code(500).send({ records: [], error: error.message, runtime: publicRuntimeState() });
   }
 });
 
@@ -601,12 +840,7 @@ app.get('/memory/search', async (request, reply) => {
     return { records: query ? await memory.search(query) : await memory.list() };
   } catch (error) {
     request.log.error({ error }, 'memory search failed');
-
-    return reply.code(500).send({
-      records: [],
-      error: error.message,
-      runtime: publicRuntimeState()
-    });
+    return reply.code(500).send({ records: [], error: error.message, runtime: publicRuntimeState() });
   }
 });
 
@@ -619,14 +853,116 @@ app.get('/projects', async (request, reply) => {
          order by created_at desc
          limit 25`
       );
-
-      return { projects: result.rows };
+      return { projects: result.rows.map(mapProject) };
     }
 
-    return { projects: [...generatedProjects].reverse().slice(0, 25) };
+    return { projects: [...generatedProjects].reverse().slice(0, 25).map(mapProject) };
   } catch (error) {
     request.log.error({ error }, 'project list failed');
     return reply.code(500).send({ projects: [], error: error.message });
+  }
+});
+
+app.get('/projects/:projectId/files/content', async (request, reply) => {
+  try {
+    const bundle = await getGeneratedProjectBundle(request.params.projectId);
+
+    if (!bundle) {
+      return reply.code(404).send({ success: false, error: 'Project not found.' });
+    }
+
+    const requestedPath = String(request.query?.path ?? '').trim();
+
+    if (!requestedPath) {
+      return reply.code(400).send({ success: false, error: 'Query parameter "path" is required.' });
+    }
+
+    const file = bundle.files.find(item => item.path === requestedPath);
+
+    if (!file) {
+      return reply.code(404).send({ success: false, error: 'File not found.' });
+    }
+
+    return { success: true, project: bundle.project, file };
+  } catch (error) {
+    request.log.error({ error }, 'generated file content failed');
+    return reply.code(500).send({ success: false, error: error.message });
+  }
+});
+
+app.get('/projects/:projectId/files', async (request, reply) => {
+  try {
+    const bundle = await getGeneratedProjectBundle(request.params.projectId);
+
+    if (!bundle) {
+      return reply.code(404).send({ success: false, error: 'Project not found.' });
+    }
+
+    return {
+      success: true,
+      project: bundle.project,
+      files: bundle.files.map(({ content, ...summary }) => summary)
+    };
+  } catch (error) {
+    request.log.error({ error }, 'generated file list failed');
+    return reply.code(500).send({ success: false, error: error.message });
+  }
+});
+
+app.post('/projects/:projectId/validate', async (request, reply) => {
+  try {
+    const bundle = await getGeneratedProjectBundle(request.params.projectId);
+
+    if (!bundle) {
+      return reply.code(404).send({ success: false, error: 'Project not found.' });
+    }
+
+    const validation = validateGeneratedFiles(bundle.files);
+    await tryAddMemory({
+      type: 'project-validation',
+      content: JSON.stringify({ projectId: bundle.project.id, validation }, null, 2),
+      metadata: { projectId: bundle.project.id, success: validation.success }
+    }, request);
+
+    return { success: validation.success, project: bundle.project, validation };
+  } catch (error) {
+    request.log.error({ error }, 'project validation failed');
+    return reply.code(500).send({ success: false, error: error.message });
+  }
+});
+
+app.get('/projects/:projectId/preview', async (request, reply) => {
+  try {
+    const bundle = await getGeneratedProjectBundle(request.params.projectId);
+
+    if (!bundle) {
+      return reply.code(404).type('text/html').send('<h1>Project not found</h1>');
+    }
+
+    return reply.type('text/html').send(buildProjectPreviewHtml(bundle.project, bundle.files));
+  } catch (error) {
+    request.log.error({ error }, 'project preview failed');
+    return reply.code(500).type('text/html').send(`<h1>Preview failed</h1><p>${escapeHtml(error.message)}</p>`);
+  }
+});
+
+app.get('/projects/:projectId', async (request, reply) => {
+  try {
+    const bundle = await getGeneratedProjectBundle(request.params.projectId);
+
+    if (!bundle) {
+      return reply.code(404).send({ success: false, error: 'Project not found.' });
+    }
+
+    return {
+      success: true,
+      project: bundle.project,
+      runs: bundle.runs,
+      files: bundle.files.map(({ content, ...summary }) => summary)
+    };
+  } catch (error) {
+    request.log.error({ error }, 'project detail failed');
+    return reply.code(500).send({ success: false, error: error.message });
   }
 });
 
@@ -639,17 +975,13 @@ app.get('/ws/events', { websocket: true }, connection => {
   }
 
   sockets.add(socket);
-
   socket.send(JSON.stringify({
     id: `event-${Date.now()}`,
     type: 'system',
     message: 'Connected to Advanced Agent OS live event stream.',
     timestamp: new Date().toISOString()
   }));
-
-  socket.on('close', () => {
-    sockets.delete(socket);
-  });
+  socket.on('close', () => sockets.delete(socket));
 });
 
 app.post('/projects/generate', async (request, reply) => {
@@ -658,10 +990,7 @@ app.post('/projects/generate', async (request, reply) => {
   const requestedName = String(body.projectName ?? '').trim();
 
   if (!prompt) {
-    return reply.code(400).send({
-      success: false,
-      error: 'Prompt is required.'
-    });
+    return reply.code(400).send({ success: false, error: 'Prompt is required.' });
   }
 
   const now = new Date();
@@ -682,17 +1011,22 @@ app.post('/projects/generate', async (request, reply) => {
   });
 
   const files = buildWebsiteFiles({ prompt, projectName: name, rootPath });
+  const validation = validateGeneratedFiles(files.map(file => ({
+    ...file,
+    id: randomUUID(),
+    projectId,
+    runId,
+    action: 'create',
+    metadata: { bytes: file.content.length }
+  })));
   const github = await commitGeneratedFilesToGitHub({ branch, files, request });
   const project = {
     id: projectId,
     name,
     prompt,
     status: github.error ? 'generated_with_git_error' : 'generated',
-    metadata: {
-      slug,
-      rootPath,
-      fileCount: files.length
-    },
+    metadata: { slug, rootPath, fileCount: files.length },
+    previewUrl: projectPreviewUrl(projectId),
     createdAt: now.toISOString()
   };
   const run = {
@@ -701,22 +1035,13 @@ app.post('/projects/generate', async (request, reply) => {
     prompt,
     status: project.status,
     agentSummary: `Generated ${files.length} Vite/React files for ${name}.`,
-    metadata: {
-      github,
-      files: files.map(file => ({ path: file.path, bytes: file.content.length }))
-    }
+    metadata: { github, files: files.map(file => ({ path: file.path, bytes: file.content.length })) }
   };
   const persistenceError = await saveGeneratedProject({ project, run, files, github }, request);
-
   const { memoryRecord, memoryError } = await tryAddMemory({
     type: 'project-generated',
     content: JSON.stringify({ project, run, github, files: files.map(file => file.path) }, null, 2),
-    metadata: {
-      projectId,
-      runId,
-      prompt,
-      github
-    }
+    metadata: { projectId, runId, prompt, github }
   }, request);
 
   addEvent({
@@ -724,14 +1049,7 @@ app.post('/projects/generate', async (request, reply) => {
     type: 'project.generation.completed',
     message: `Project generation completed: ${name}`,
     timestamp: new Date().toISOString(),
-    data: {
-      projectId,
-      runId,
-      fileCount: files.length,
-      github,
-      persistenceError,
-      memoryError
-    }
+    data: { projectId, runId, fileCount: files.length, validation, github, persistenceError, memoryError }
   });
 
   return {
@@ -739,6 +1057,7 @@ app.post('/projects/generate', async (request, reply) => {
     project,
     run,
     files: files.map(file => ({ path: file.path, bytes: file.content.length })),
+    validation,
     github,
     persistenceError,
     memoryRecord,
@@ -751,7 +1070,6 @@ app.post('/tools/run-command', async request => {
   const body = request.body ?? {};
   const command = body.command ?? '';
   const agentId = body.agentId ?? 'manual-operator';
-
   const result = await commandRunner.run(command, { agentId });
 
   addEvent({
@@ -762,16 +1080,10 @@ app.post('/tools/run-command', async request => {
     timestamp: new Date().toISOString(),
     data: result
   });
-
   await tryAddMemory({
     type: 'tool-command-result',
     content: JSON.stringify(result, null, 2),
-    metadata: {
-      agentId,
-      command,
-      mode: result.mode,
-      success: result.success
-    }
+    metadata: { agentId, command, mode: result.mode, success: result.success }
   }, request);
 
   return result;
@@ -779,14 +1091,12 @@ app.post('/tools/run-command', async request => {
 
 app.post('/run-demo', async () => {
   const timestamp = new Date().toISOString();
-
   addEvent({
     id: `event-${events.length + 1}`,
     type: 'task',
     message: 'Demo project task started by Project Manager Agent.',
     timestamp
   });
-
   addEvent({
     id: `event-${events.length + 1}`,
     type: 'agent',
@@ -794,12 +1104,7 @@ app.post('/run-demo', async () => {
     timestamp: new Date().toISOString()
   });
 
-  return {
-    success: true,
-    message: 'Demo orchestration started.',
-    agentsQueued: agents.length,
-    events
-  };
+  return { success: true, message: 'Demo orchestration started.', agentsQueued: agents.length, events };
 });
 
 app.post('/run-ai-demo', async request => {
@@ -818,71 +1123,35 @@ app.post('/run-ai-demo', async request => {
 
   try {
     const result = await provider.complete([
-      {
-        role: 'system',
-        content: 'You are the Project Manager Agent inside Advanced Agent OS. Return a concise engineering plan.'
-      },
-      {
-        role: 'user',
-        content: prompt
-      }
+      { role: 'system', content: 'You are the Project Manager Agent inside Advanced Agent OS. Return a concise engineering plan.' },
+      { role: 'user', content: prompt }
     ]);
-
     providerCompletedEvent(agentId, result);
-
     const { memoryRecord, memoryError } = await tryAddMemory({
       type: 'ai-demo-result',
       content: result.content,
-      metadata: {
-        agentId,
-        prompt,
-        model: result.model,
-        usage: result.usage ?? null
-      }
+      metadata: { agentId, prompt, model: result.model, usage: result.usage ?? null }
     }, request);
-
     addEvent({
       id: `event-${events.length + 1}`,
       type: 'task.completed',
       agentId,
       message: `Run AI Demo completed with model ${result.model}.`,
       timestamp: new Date().toISOString(),
-      data: {
-        model: result.model,
-        memoryRecordId: memoryRecord?.id ?? null,
-        memoryError
-      }
+      data: { model: result.model, memoryRecordId: memoryRecord?.id ?? null, memoryError }
     });
 
-    return {
-      success: true,
-      prompt,
-      result,
-      memoryRecord,
-      memoryError
-    };
+    return { success: true, prompt, result, memoryRecord, memoryError };
   } catch (error) {
     providerErrorEvent(agentId, error);
-
     const { memoryRecord, memoryError } = await tryAddMemory({
       type: 'ai-demo-error',
       content: error.message,
-      metadata: {
-        agentId,
-        prompt
-      }
+      metadata: { agentId, prompt }
     }, request);
-
     request.log.error({ error }, 'run-ai-demo failed');
 
-    return {
-      success: false,
-      prompt,
-      error: error.message,
-      memoryRecord,
-      memoryError,
-      runtime: publicRuntimeState()
-    };
+    return { success: false, prompt, error: error.message, memoryRecord, memoryError, runtime: publicRuntimeState() };
   }
 });
 
@@ -905,103 +1174,62 @@ app.post('/run-agent-chain', async request => {
       goal,
       request
     );
-
     const architecture = await runAgentStep(
       'architect',
       'You are the Architect Agent. Convert the project plan into a technical architecture with modules and data flow.',
       projectPlan,
       request
     );
-
     const backendPlan = await runAgentStep(
       'backend',
       'You are the Backend Agent. Produce API, database and service implementation tasks from the architecture.',
       architecture,
       request
     );
-
     const frontendPlan = await runAgentStep(
       'frontend',
       'You are the Frontend Agent. Produce UI screens, components and state management tasks from the architecture.',
       architecture,
       request
     );
-
     const qaPlan = await runAgentStep(
       'qa',
       'You are the QA Agent. Review the backend and frontend plans and produce a practical test strategy.',
       `Backend plan:\n${backendPlan}\n\nFrontend plan:\n${frontendPlan}`,
       request
     );
-
-    const finalResult = {
-      goal,
-      projectPlan,
-      architecture,
-      backendPlan,
-      frontendPlan,
-      qaPlan
-    };
-
+    const finalResult = { goal, projectPlan, architecture, backendPlan, frontendPlan, qaPlan };
     const { memoryRecord, memoryError } = await tryAddMemory({
       type: 'agent-chain-artifact',
       content: JSON.stringify(finalResult, null, 2),
-      metadata: {
-        goal,
-        agents: ['project-manager', 'architect', 'backend', 'frontend', 'qa']
-      }
+      metadata: { goal, agents: ['project-manager', 'architect', 'backend', 'frontend', 'qa'] }
     }, request);
-
     addEvent({
       id: `event-${events.length + 1}`,
       type: 'artifact.created',
       message: 'Multi-agent chain completed and produced final execution artifact.',
       timestamp: new Date().toISOString(),
-      data: {
-        ...finalResult,
-        memoryRecordId: memoryRecord?.id ?? null,
-        memoryError
-      }
+      data: { ...finalResult, memoryRecordId: memoryRecord?.id ?? null, memoryError }
     });
-
     addEvent({
       id: `event-${events.length + 1}`,
       type: 'task.completed',
       message: 'Multi-agent chain completed successfully.',
       timestamp: new Date().toISOString(),
-      data: {
-        goal,
-        memoryRecordId: memoryRecord?.id ?? null,
-        memoryError
-      }
+      data: { goal, memoryRecordId: memoryRecord?.id ?? null, memoryError }
     });
 
-    return {
-      success: true,
-      result: finalResult,
-      memoryRecord,
-      memoryError
-    };
+    return { success: true, result: finalResult, memoryRecord, memoryError };
   } catch (error) {
     providerErrorEvent('agent-chain', error);
-
     const { memoryRecord, memoryError } = await tryAddMemory({
       type: 'agent-chain-error',
       content: error.message,
-      metadata: {
-        goal
-      }
+      metadata: { goal }
     }, request);
-
     request.log.error({ error }, 'run-agent-chain failed');
 
-    return {
-      success: false,
-      error: error.message,
-      memoryRecord,
-      memoryError,
-      runtime: publicRuntimeState()
-    };
+    return { success: false, error: error.message, memoryRecord, memoryError, runtime: publicRuntimeState() };
   }
 });
 
