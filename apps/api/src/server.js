@@ -19,7 +19,6 @@ app.addHook('onRequest', async (request, reply) => {
 });
 
 await app.register(websocket);
- 
 
 const PORT = process.env.PORT || 3000;
 const provider = new OpenAiCompatibleProvider();
@@ -52,10 +51,24 @@ const events = [
 
 const sockets = new Set();
 
+function isOpenSocket(socket) {
+  return socket && typeof socket.send === 'function' && socket.readyState === 1;
+}
+
 function broadcast(event) {
-  for (const socket of sockets) {
-    if (socket.readyState === 1) {
-      socket.send(JSON.stringify(event));
+  const payload = JSON.stringify(event);
+
+  for (const socket of [...sockets]) {
+    if (!isOpenSocket(socket)) {
+      sockets.delete(socket);
+      continue;
+    }
+
+    try {
+      socket.send(payload);
+    } catch (error) {
+      app.log.warn({ error }, 'websocket broadcast failed');
+      sockets.delete(socket);
     }
   }
 }
@@ -204,25 +217,22 @@ async function runAgentStep(agentId, systemPrompt, userPrompt, request) {
   }
 }
 
-app.get('/', async () => {
-  return {
-    status: 'ok',
-    service: 'advanced-agent-os'
-  };
-});
+app.get('/', async () => ({
+  status: 'ok',
+  service: 'advanced-agent-os'
+}));
 
-app.get('/health', async () => {
-  return {
-    status: 'ok',
-    service: 'advanced-agent-os-api'
-  };
-});
+app.get('/health', async () => ({
+  status: 'ok',
+  service: 'advanced-agent-os-api'
+}));
 
 app.get('/debug/memory-state', async (request, reply) => {
   try {
     return {
       ...publicRuntimeState(),
-      recordCount: (await memory.list()).length
+      recordCount: (await memory.list()).length,
+      socketCount: sockets.size
     };
   } catch (error) {
     request.log.error({ error }, 'memory state check failed');
@@ -257,7 +267,7 @@ app.get('/test-memory', async (request, reply) => {
   };
 });
 
-app.get('/test-groq', async (req, reply) => {
+app.get('/test-groq', async (request, reply) => {
   try {
     const result = await provider.complete([
       {
@@ -279,13 +289,9 @@ app.get('/test-groq', async (req, reply) => {
   }
 });
 
-app.get('/agents', async () => {
-  return { agents };
-});
+app.get('/agents', async () => ({ agents }));
 
-app.get('/events', async () => {
-  return { events };
-});
+app.get('/events', async () => ({ events }));
 
 app.get('/memory', async (request, reply) => {
   try {
@@ -318,17 +324,24 @@ app.get('/memory/search', async (request, reply) => {
 });
 
 app.get('/ws/events', { websocket: true }, connection => {
-  sockets.add(connection.socket);
+  const socket = connection?.socket ?? connection;
 
-  connection.socket.send(JSON.stringify({
+  if (!socket || typeof socket.send !== 'function') {
+    app.log.warn('websocket connection did not expose a socket');
+    return;
+  }
+
+  sockets.add(socket);
+
+  socket.send(JSON.stringify({
     id: `event-${Date.now()}`,
     type: 'system',
     message: 'Connected to Advanced Agent OS live event stream.',
     timestamp: new Date().toISOString()
   }));
 
-  connection.socket.on('close', () => {
-    sockets.delete(connection.socket);
+  socket.on('close', () => {
+    sockets.delete(socket);
   });
 });
 
