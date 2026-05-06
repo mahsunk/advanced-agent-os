@@ -71,9 +71,15 @@ function App() {
 
     try {
       const response = await runAiDemo(prompt);
-      setAiResult(response.result?.content ?? 'No AI result returned.');
+      const runtimeError = [response.error, response.memoryError]
+        .filter(Boolean)
+        .join('\n');
+
+      setAiResult(response.result?.content ?? runtimeError ?? 'No AI result returned.');
       await refreshEvents();
       await refreshMemory();
+    } catch (error) {
+      setAiResult(error instanceof Error ? error.message : 'Failed to run AI demo.');
     } finally {
       setIsAiRunning(false);
     }
@@ -84,7 +90,7 @@ function App() {
 
     try {
       const response = await runAgentChain(prompt);
-      setChainResult(response.result);
+      setChainResult(response.result ?? { error: response.error, memoryError: response.memoryError });
       await refreshEvents();
       await refreshMemory();
     } finally {
